@@ -1,0 +1,19 @@
+profile_a:
+  schedule:
+    enabled: false
+    times:
+      - "00:33"
+      - "06:33"
+      - "14:33"
+      - "17:33"
+  log: "OFF"
+  lang: "en"
+
+profile_b:
+  schedule:
+    enabled: false
+    times:
+      - "02:00"
+      - "16:10"
+  log: "OFF"
+  lang: "zh"

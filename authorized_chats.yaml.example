@@ -1,0 +1,9 @@
+# Static mapping: profile name -> Telegram chat ID.
+# Leave unused profiles blank.
+#
+# Example:
+# profile_a: 123456789
+# profile_b: -1001234567890
+
+profile_a:
+profile_b:

@@ -1,0 +1,16 @@
+# Telegram bot token from BotFather.
+TOKEN: "PUT_BOT_TOKEN_HERE"
+
+# Runtime settings.
+TIMEZONE: "Asia/Singapore"
+PERSISTENT: true
+
+# These paths are relative to this file unless absolute.
+AUTHORIZED_CHATS_FILE: "authorized_chats.yaml"
+PROFILES_FILE: "profiles.yaml"
+
+# maa-cli task JSON directory used by /task and /fight.
+MAA_TASKS_DIR: "~/.config/maa/tasks"
+
+# Optional installer override. Leave blank to use `command -v maa`.
+MAA_EXECUTABLE: ""

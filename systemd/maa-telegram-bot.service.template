@@ -1,0 +1,16 @@
+[Unit]
+Description=MAA Telegram Control Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory="@WORKDIR@"
+ExecStart="@PYTHON@" "@WORKDIR@/maa_control.py"
+Environment="PYTHONUNBUFFERED=1"
+Environment="PATH=@PATH@"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

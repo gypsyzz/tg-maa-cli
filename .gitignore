@@ -1,0 +1,14 @@
+# Secrets / machine-specific runtime state
+telegram_config.yaml
+authorized_chats.yaml
+profiles.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

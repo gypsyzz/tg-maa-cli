@@ -1,0 +1,12 @@
+[Unit]
+Description=MAA task @NAME@
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+ExecStart="@MAA_BIN@" run @SLUG@ -p @SLUG@
+Environment="PATH=@PATH@"
+KillMode=control-group
+TimeoutStopSec=20s
+Restart=no
