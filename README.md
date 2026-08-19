@@ -2,6 +2,7 @@
 
 一个用于控制 `maa-cli` 的 Telegram Bot 控制层，支持：
 
+- 仅授权的电报用户可以控制
 - 用户独立 MAA 任务
 - 用户级 systemd Service 和 Timer
 - 持久化运行计划

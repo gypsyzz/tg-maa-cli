@@ -1,4 +1,6 @@
 # Static mapping: profile name -> Telegram chat ID.
+# Only authorized users can control bot
+# Unauthorized users can send command, but bot will not respond, nor relay commands to maa
 # Leave unused profiles blank.
 #
 # Example:
