@@ -53,7 +53,7 @@ TEXT = {
         "log_mode_title": "📜 {name} log mode: {mode}",
         "log_desc_off": "automatic log messages disabled",
         "log_desc_on": "send only explicitly non-Completed MAA subtask summaries",
-        "log_desc_full": "send the full log after every invocation",
+        "log_desc_full": "send log after each MAA subtask finishes",
 
         "start_failed": "❌ Start failed:\n{error}",
         "stop_failed": "❌ Stop failed:\n{error}",
@@ -139,7 +139,7 @@ TEXT = {
         "log_mode_title": "📜 {name} 日志模式: {mode}",
         "log_desc_off": "自动日志消息已关闭",
         "log_desc_on": "仅当 MAA 明确报告子任务状态不是 Completed 时发送",
-        "log_desc_full": "每次运行结束后发送该次运行的完整日志",
+        "log_desc_full": "每个 MAA 子任务结束后发送运行结果",
 
         "start_failed": "❌ 启动失败:\n{error}",
         "stop_failed": "❌ 停止失败:\n{error}",

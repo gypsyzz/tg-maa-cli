@@ -61,6 +61,39 @@ EVENT_STATUS = {
 }
 
 
+# Lines worth retaining when diagnosing a failed task.
+#
+# Important:
+# SubTaskError alone does NOT mean the whole task failed.
+# These lines are collected, but they are only sent if the
+# top-level task eventually emits TaskChainError.
+FAILURE_LINE_RE = re.compile(
+    r"(?:"
+    r"Assistant::append_callback \| "
+    r"(?:SubTaskError|TaskChainError)\b"
+    r"|"
+    r"\[(?:ERR|ERROR)\]"
+    r"|"
+    r"\b(?:error|failed|failure|fatal|exception)\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+# Remove the verbose MaaCore prefix:
+#
+# [2026-08-19 00:22:11.088][INF][Px2921942][Tx50880]
+#
+LOG_PREFIX_RE = re.compile(
+    r"^"
+    r"\[[^\]]+\]"
+    r"\[[^\]]+\]"
+    r"\[Px\d+\]"
+    r"\[Tx\d+\]"
+    r"\s*"
+)
+
+
 # ---------------------------------------------------------------------------
 # Runtime state
 # ---------------------------------------------------------------------------
@@ -77,13 +110,15 @@ class ActiveTask:
     taskchain: str
     taskid: int
 
-    lines: list[str] = field(
+    # Only explicit error/failure-related lines
+    # are kept. Normal OCR/ADB/TRC lines are not.
+    failure_lines: list[str] = field(
         default_factory=list
     )
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# General helpers
 # ---------------------------------------------------------------------------
 
 def strip_ansi(
@@ -98,7 +133,8 @@ def strip_ansi(
 def normalize_log_mode(
     value,
 ) -> str:
-    # YAML 1.1 may interpret ON/OFF as bool.
+    # YAML may interpret unquoted ON/OFF
+    # as bool values.
     if value is True:
         return "ON"
 
@@ -119,13 +155,17 @@ def normalize_log_mode(
     return mode
 
 
+# ---------------------------------------------------------------------------
+# asst.log handling
+# ---------------------------------------------------------------------------
+
 async def resolve_asst_log_path() -> Path:
     """
     Resolve:
 
         $(maa dir log)/asst.log
 
-    Example:
+    Typical Linux result:
 
         ~/.local/state/maa/debug/asst.log
     """
@@ -149,7 +189,7 @@ async def resolve_asst_log_path() -> Path:
 
     if maa_bin:
         try:
-            proc = await asyncio.create_subprocess_exec(
+            process = await asyncio.create_subprocess_exec(
                 maa_bin,
                 "dir",
                 "log",
@@ -158,14 +198,14 @@ async def resolve_asst_log_path() -> Path:
             )
 
             stdout, _ = (
-                await proc.communicate()
+                await process.communicate()
             )
 
             if (
-                proc.returncode == 0
+                process.returncode == 0
                 and stdout
             ):
-                directory = Path(
+                log_dir = Path(
                     stdout.decode(
                         "utf-8",
                         errors="replace",
@@ -173,13 +213,14 @@ async def resolve_asst_log_path() -> Path:
                 )
 
                 return (
-                    directory
+                    log_dir
                     / "asst.log"
                 )
 
         except Exception:
             pass
 
+    # Normal maa-cli Linux fallback.
     return (
         Path.home()
         / ".local"
@@ -194,10 +235,8 @@ def initial_cursor(
     path: Path,
 ) -> LogCursor:
     """
-    Start at EOF.
-
-    This prevents restarting the Telegram bot
-    from replaying old MaaCore events.
+    Begin at EOF so restarting the Telegram bot
+    does not replay old MaaCore tasks.
     """
 
     try:
@@ -216,8 +255,8 @@ def read_new_log_lines(
     cursor: LogCursor,
 ) -> list[str]:
     """
-    Incrementally read only newly appended
-    lines from asst.log.
+    Incrementally read newly appended data from
+    MaaCore's asst.log.
     """
 
     try:
@@ -225,7 +264,7 @@ def read_new_log_lines(
     except OSError:
         return []
 
-    # File replaced/rotated/truncated.
+    # Log file was replaced, rotated, or truncated.
     if (
         cursor.inode != stat.st_ino
         or stat.st_size < cursor.offset
@@ -237,15 +276,15 @@ def read_new_log_lines(
     try:
         with path.open(
             "rb"
-        ) as f:
-            f.seek(
+        ) as file:
+            file.seek(
                 cursor.offset
             )
 
-            data = f.read()
+            data = file.read()
 
             cursor.offset = (
-                f.tell()
+                file.tell()
             )
 
     except OSError:
@@ -263,8 +302,8 @@ def read_new_log_lines(
         b"\n"
     )
 
-    # Last element may not yet be a complete
-    # line.
+    # The final piece may still be an
+    # incomplete line.
     cursor.partial = (
         parts.pop()
     )
@@ -278,15 +317,19 @@ def read_new_log_lines(
     ]
 
 
+# ---------------------------------------------------------------------------
+# MaaCore parsing
+# ---------------------------------------------------------------------------
+
 def parse_pid(
     line: str,
 ) -> int | None:
     """
-    Parse:
+    Extract:
 
-        [Px2888354]
+        [Px3308182]
 
-    from MaaCore log.
+    -> 3308182
     """
 
     match = PID_RE.search(
@@ -311,12 +354,15 @@ def parse_taskchain_callback(
     int,
 ] | None:
     """
-    Parse top-level MaaCore callbacks such as:
+    Parse top-level MaaCore task callbacks:
 
         TaskChainStart
         TaskChainCompleted
         TaskChainError
         TaskChainStopped
+
+    Internal SubTask callbacks are deliberately
+    not considered task completion events.
     """
 
     match = (
@@ -371,6 +417,72 @@ def parse_taskchain_callback(
     )
 
 
+# ---------------------------------------------------------------------------
+# Failure extraction
+# ---------------------------------------------------------------------------
+
+def extract_failure_line(
+    line: str,
+) -> str | None:
+    """
+    Return a compact failure-related line.
+
+    Normal MaaCore debug lines return None.
+    """
+
+    line = strip_ansi(
+        line
+    ).strip()
+
+    if not FAILURE_LINE_RE.search(
+        line
+    ):
+        return None
+
+    # Remove timestamp / level / PID / thread prefix.
+    line = LOG_PREFIX_RE.sub(
+        "",
+        line,
+    )
+
+    # For MaaCore callbacks, remove another
+    # unnecessary prefix:
+    #
+    # Assistant::append_callback | SubTaskError ...
+    #
+    marker = (
+        "Assistant::append_callback | "
+    )
+
+    if marker in line:
+        line = line.split(
+            marker,
+            1,
+        )[1]
+
+    return line.strip()
+
+
+def failure_details(
+    task: ActiveTask,
+) -> str:
+    """
+    Return only actual failure/error-related
+    lines collected during this task.
+    """
+
+    if not task.failure_lines:
+        return ""
+
+    return "\n".join(
+        task.failure_lines
+    )
+
+
+# ---------------------------------------------------------------------------
+# Result formatting
+# ---------------------------------------------------------------------------
+
 def task_result_text(
     task: ActiveTask,
     event: str,
@@ -398,8 +510,8 @@ async def report_finished_task(
     event: str,
 ) -> None:
     """
-    Called IMMEDIATELY when a top-level
-    TaskChain terminal event appears.
+    Called immediately when MaaCore emits a
+    terminal TaskChain event.
     """
 
     profile = get_profile(
@@ -414,22 +526,41 @@ async def report_finished_task(
 
     # -------------------------------------------------------
     # OFF
+    #
+    # Never send automatic task results.
     # -------------------------------------------------------
 
     if mode == "OFF":
         return
+
+    result = task_result_text(
+        task,
+        event,
+    )
 
     # -------------------------------------------------------
     # ON
     #
     # Completed -> nothing
     # Stopped   -> nothing
-    # Error     -> report immediately
+    # Error     -> send immediately with failure details
     # -------------------------------------------------------
 
     if mode == "ON":
         if event != "TaskChainError":
             return
+
+        details = failure_details(
+            task
+        )
+
+        text = result
+
+        if details:
+            text += (
+                "\n\n"
+                f"{details}"
+            )
 
         await send_profile_preformatted(
             application,
@@ -439,10 +570,7 @@ async def report_finished_task(
                 "incomplete_log_title",
                 name=name,
             ),
-            text=task_result_text(
-                task,
-                event,
-            ),
+            text=text,
         )
 
         return
@@ -450,26 +578,27 @@ async def report_finished_task(
     # -------------------------------------------------------
     # FULL
     #
-    # Report every top-level task immediately when it ends.
+    # Completed -> short result
+    # Stopped   -> short result
+    # Error     -> result + failure details
+    #
+    # FULL means every MAA subtask is reported.
+    # It does NOT dump the full MaaCore debug log.
     # -------------------------------------------------------
 
     if mode == "FULL":
-        result = task_result_text(
-            task,
-            event,
-        )
+        text = result
 
-        log_text = "\n".join(
-            task.lines
-        )
-
-        if log_text:
-            text = (
-                f"{result}\n\n"
-                f"{log_text}"
+        if event == "TaskChainError":
+            details = failure_details(
+                task
             )
-        else:
-            text = result
+
+            if details:
+                text += (
+                    "\n\n"
+                    f"{details}"
+                )
 
         await send_profile_preformatted(
             application,
@@ -484,7 +613,7 @@ async def report_finished_task(
 
 
 # ---------------------------------------------------------------------------
-# MaaCore log processing
+# Process MaaCore log lines
 # ---------------------------------------------------------------------------
 
 async def process_log_line(
@@ -514,29 +643,40 @@ async def process_log_line(
         pid
     )
 
-    # Ignore MaaCore processes that do not
-    # belong to a managed systemd profile.
+    # Ignore MAA processes that are not one
+    # of our managed systemd profile workers.
     #
-    # For example:
+    # Therefore something manually run like:
     #
     #     maa run failtest -p yan
     #
-    # started manually from a terminal will
-    # not generate Telegram notifications.
+    # will not generate Telegram messages.
     if name is None:
         return
+
+    # -------------------------------------------------------
+    # Collect ONLY failure-related lines
+    # -------------------------------------------------------
 
     current = active_tasks.get(
         pid
     )
 
-    # Once TaskChainStart has been observed,
-    # accumulate this process's log lines
-    # until the corresponding terminal event.
-    if current is not None:
-        current.lines.append(
-            line
+    failure_line = extract_failure_line(
+        line
+    )
+
+    if (
+        current is not None
+        and failure_line is not None
+    ):
+        current.failure_lines.append(
+            failure_line
         )
+
+    # -------------------------------------------------------
+    # Parse top-level TaskChain event
+    # -------------------------------------------------------
 
     callback = (
         parse_taskchain_callback(
@@ -554,7 +694,7 @@ async def process_log_line(
     ) = callback
 
     # -------------------------------------------------------
-    # Top-level task started
+    # Task started
     # -------------------------------------------------------
 
     if event == "TaskChainStart":
@@ -563,15 +703,13 @@ async def process_log_line(
         ] = ActiveTask(
             taskchain=taskchain,
             taskid=taskid,
-            lines=[
-                line
-            ],
         )
 
         return
 
     # -------------------------------------------------------
-    # Ignore anything except terminal TaskChain events
+    # Only top-level terminal TaskChain events
+    # mean the MAA task is finished.
     # -------------------------------------------------------
 
     if event not in TERMINAL_EVENTS:
@@ -581,20 +719,24 @@ async def process_log_line(
         pid
     )
 
-    # Bot may have restarted after TaskChainStart,
-    # in which case we can still report the
-    # terminal state.
+    # Bot may have restarted while MAA was
+    # already executing the task.
     if (
         task is None
         or task.taskid != taskid
+        or task.taskchain != taskchain
     ):
         task = ActiveTask(
             taskchain=taskchain,
             taskid=taskid,
-            lines=[
-                line
-            ],
         )
+
+        # If this terminal line itself is an
+        # error line, preserve it.
+        if failure_line is not None:
+            task.failure_lines.append(
+                failure_line
+            )
 
     try:
         await report_finished_task(
@@ -612,7 +754,7 @@ async def process_log_line(
 
 
 # ---------------------------------------------------------------------------
-# systemd PID mapping
+# systemd PID -> profile mapping
 # ---------------------------------------------------------------------------
 
 async def refresh_profile_pids(
@@ -620,14 +762,13 @@ async def refresh_profile_pids(
         int,
         str,
     ],
-) -> None:
+) -> set[int]:
     """
-    Map:
-
-        MaaCore Px PID -> Telegram profile
-
-    using each managed systemd worker's MainPID.
+    Map each profile's systemd MainPID to its
+    Telegram/MAA profile name.
     """
+
+    active_pids: set[int] = set()
 
     for name in AUTHORIZED_BY_NAME:
         unit = service_unit_for(
@@ -658,9 +799,51 @@ async def refresh_profile_pids(
             pid
         ] = name
 
+        active_pids.add(
+            pid
+        )
+
+    return active_pids
+
+
+def prune_stale_pids(
+    pid_to_profile: dict[
+        int,
+        str,
+    ],
+    active_tasks: dict[
+        int,
+        ActiveTask,
+    ],
+    active_pids: set[int],
+) -> None:
+    """
+    Remove mappings for worker processes that
+    are no longer running.
+
+    This prevents PID reuse from associating a
+    future unrelated process with an old profile.
+    """
+
+    for pid in list(
+        pid_to_profile
+    ):
+        if pid in active_pids:
+            continue
+
+        pid_to_profile.pop(
+            pid,
+            None,
+        )
+
+        active_tasks.pop(
+            pid,
+            None,
+        )
+
 
 # ---------------------------------------------------------------------------
-# Monitor
+# Main realtime monitor
 # ---------------------------------------------------------------------------
 
 async def log_monitor_loop(
@@ -674,13 +857,14 @@ async def log_monitor_loop(
         log_path
     )
 
-    # Maa process PID -> profile name
+    # Maa process PID -> profile
     pid_to_profile: dict[
         int,
         str,
     ] = {}
 
-    # Maa process PID -> current top-level task
+    # Maa process PID -> currently running
+    # top-level TaskChain
     active_tasks: dict[
         int,
         ActiveTask,
@@ -688,14 +872,22 @@ async def log_monitor_loop(
 
     try:
         while True:
-            # First associate running systemd
-            # workers with their MaaCore PID.
-            await refresh_profile_pids(
-                pid_to_profile
+            # Refresh PID mapping first.
+            #
+            # Existing stale mappings are NOT
+            # removed until after new log lines
+            # have been processed. This is
+            # important because MaaCore may emit
+            # its final TaskChain callback just
+            # before the systemd service exits.
+            active_pids = (
+                await refresh_profile_pids(
+                    pid_to_profile
+                )
             )
 
-            # Then consume only newly written
-            # MaaCore log lines.
+            # Read only newly appended MaaCore
+            # log lines.
             lines = await asyncio.to_thread(
                 read_new_log_lines,
                 log_path,
@@ -712,10 +904,18 @@ async def log_monitor_loop(
                     )
 
                 except Exception:
-                    # A malformed MaaCore log line
-                    # must not terminate the entire
-                    # Telegram monitor.
+                    # One malformed log line must
+                    # not kill the entire monitor.
                     continue
+
+            # Now that newly written lines have
+            # been processed, old PID mappings
+            # can safely be discarded.
+            prune_stale_pids(
+                pid_to_profile,
+                active_tasks,
+                active_pids,
+            )
 
             await asyncio.sleep(
                 0.5
