@@ -1,0 +1,10 @@
+[Unit]
+Description=MAA schedule for __PROFILE_DISPLAY__
+
+[Timer]
+__ON_CALENDAR_LINES__
+Persistent=true
+Unit=maa-__PROFILE_SLUG__.service
+
+[Install]
+WantedBy=timers.target

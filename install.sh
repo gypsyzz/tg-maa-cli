@@ -198,7 +198,6 @@ if [[ -f "$MANAGED_FILE" ]]; then
         fi
     done < "$MANAGED_FILE"
 fi
-
 render_bot_unit
 
 for name in "${NAMES[@]}"; do
@@ -206,6 +205,37 @@ for name in "${NAMES[@]}"; do
 done
 
 printf '%s\n' "${NAMES[@]}" > "$MANAGED_FILE"
+
+# ---------------------------------------------------------------------------
+# Install global MAA updater
+# ---------------------------------------------------------------------------
+
+UPDATE_SERVICE_TEMPLATE="$ROOT/systemd/maa-update.service.template"
+UPDATE_TIMER_TEMPLATE="$ROOT/systemd/maa-update.timer.template"
+
+UPDATE_SERVICE="$SYSTEMD_USER_DIR/maa-update.service"
+UPDATE_TIMER="$SYSTEMD_USER_DIR/maa-update.timer"
+
+if [[ ! -f "$UPDATE_SERVICE_TEMPLATE" ]]; then
+    echo "Missing systemd template: $UPDATE_SERVICE_TEMPLATE" >&2
+    exit 1
+fi
+
+if [[ ! -f "$UPDATE_TIMER_TEMPLATE" ]]; then
+    echo "Missing systemd template: $UPDATE_TIMER_TEMPLATE" >&2
+    exit 1
+fi
+
+echo "Installing global MAA updater..."
+
+sed \
+    -e "s|__MAA_BIN__|$MAA_BIN|g" \
+    "$UPDATE_SERVICE_TEMPLATE" \
+    > "$UPDATE_SERVICE"
+
+cp \
+    "$UPDATE_TIMER_TEMPLATE" \
+    "$UPDATE_TIMER"
 
 systemctl --user daemon-reload
 
@@ -226,10 +256,13 @@ MAA_BOT_CONFIG="$CONFIG" \
 "$PYTHON_BIN" "$ROOT/maa_control.py" --sync-profiles
 
 systemctl --user enable --now maa-telegram-bot.service
+systemctl --user enable --now maa-update.timer
 
 echo
 echo "Installed:"
 echo "  Telegram bot: maa-telegram-bot.service"
+echo "  Global updater: maa-update.service"
+echo "  Update timer: maa-update.timer"
 
 for name in "${NAMES[@]}"; do
     slug="${name,,}"
@@ -288,7 +321,4 @@ if command -v loginctl >/dev/null 2>&1; then
 fi
 
 echo
-echo "Useful commands:"
-echo "  systemctl --user restart maa-telegram-bot.service"
-echo "  systemctl --user status maa-telegram-bot.service"
-echo "  journalctl --user -u maa-telegram-bot.service -n 100 --no-pager"
+echo "Installation complete."

@@ -1,0 +1,8 @@
+[Unit]
+Description=Update maa-cli, MaaCore and resources
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__MAA_BIN__ self update
+ExecStart=__MAA_BIN__ update

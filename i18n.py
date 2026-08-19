@@ -96,7 +96,7 @@ TEXT = {
         "button_schedule": "🕒 定时计划",
         "button_stop_run": "⏹ 停止运行",
         "button_run_now": "▶️ 立即运行",
-        "button_log": "📜 日志模式: {mode}",
+        "button_log": "📜 日志: {mode}",
         "button_task": "📋 任务",
         "button_schedule_off": "⏸ 关闭定时",
         "button_schedule_on": "▶️ 开启定时",
