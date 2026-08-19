@@ -1,42 +1,49 @@
-# MAA Telegram Control Bot
+# MAA 电报控制 Bot
 
-A Telegram control layer for `maa-cli` with:
+一个用于控制 `maa-cli` 的 Telegram Bot 控制层，支持：
 
-- one Telegram chat -> one named MAA profile/task (`profile_a`, `profile_b`, ...)
-- user-level systemd services and timers
-- persistent schedules
-- persistent log modes (`OFF`, `ON`, `FULL`)
-- task sequence display
-- Fight stage add/remove support
-- automatic invocation-specific MAA log handling
+- 用户独立 MAA 任务
+- 用户级 systemd Service 和 Timer
+- 持久化运行计划
+- 实时日志监控
+- 任务序列查看
+- Fight 关卡添加 / 删除
+- 中英文界面
+- MAA 自动更新
 
-## Repository layout
+注：不支持编辑基建等复杂任务，请自行提供json
+
+## 项目结构
 
 ```text
-maa_control.py       application startup/lifecycle
-handlers.py          Telegram commands and callback handlers
-telegram_ui.py       status text, buttons, Telegram formatting
-profile_store.py     profiles.yaml read/write
-i18n.py              English/Chinese UI translations
-systemd_utils.py     user services/timers/journal helpers
-task_store.py        task JSON + Fight editing
-log_monitor.py       per-InvocationID automatic log monitoring
-maa_config.py        paths/config/authorization
+maa_control.py       应用启动和生命周期管理
+handlers.py          Telegram 命令和按钮回调处理
+telegram_ui.py       状态文本、按钮、Telegram 格式化
+profile_store.py     profiles.yaml 读写
+i18n.py              英文 / 中文界面翻译
+systemd_utils.py     用户级 Service / Timer / Journal 辅助功能
+task_store.py        任务 JSON 和 Fight 编辑
+log_monitor.py       基于 MaaCore TaskChain 回调的实时日志监控
+maa_config.py        路径、配置、授权
 
-install.sh           initial/update systemd setup
-uninstall.sh         remove project-owned systemd units
+install.sh           初次安装 / 更新 systemd 配置
+uninstall.sh         删除本项目管理的 systemd 单元
 
 systemd/
   maa-telegram-bot.service.template
   maa-profile.service.template
+  maa-profile.timer.template
+  maa-update.service.template
+  maa-update.timer.template
 
 tools/
-  gui2cli.py         convert Windows gui.new.json to a maa-cli task JSON
+  gui2cli.py         将 Windows上的 gui.new.json 转换为 maa-cli 任务 JSON
 ```
 
-## 1. Configuration
 
-Copy the examples:
+## 1. 配置
+
+复制示例配置文件：
 
 ```bash
 cp telegram_config.yaml.example telegram_config.yaml
@@ -44,16 +51,16 @@ cp authorized_chats.yaml.example authorized_chats.yaml
 cp profiles.yaml.example profiles.yaml
 ```
 
-Set your Telegram token in `telegram_config.yaml`.
+在 `telegram_config.yaml` 中填写 Telegram Bot Token。
 
-Set static chat authorization:
+配置静态聊天授权：
 
 ```yaml
 profile_a: 123456789
 profile_b: 987654321
 ```
 
-Runtime profile state is stored in `profiles.yaml`:
+运行时 Profile 状态保存在 `profiles.yaml`：
 
 ```yaml
 profile_a:
@@ -77,19 +84,21 @@ profile_b:
   lang: "zh"
 ```
 
-Quote `ON`/`OFF` in hand-written YAML for clarity. The code also accepts
-PyYAML boolean interpretations of unquoted `ON`/`OFF`.
+手动编写 YAML 时，建议给 `ON` / `OFF` 加上引号，以避免被 YAML 解析为布尔值。
 
-## 2. MAA profiles/tasks
+代码同时兼容 PyYAML 将未加引号的 `ON` / `OFF` 解析为布尔值的情况。
 
-For each identity, the systemd worker runs:
+
+## 2. MAA Profile / Task
+
+对于每个身份，systemd Worker 会运行：
 
 ```text
 profile_a -> maa run profile_a -p profile_a
 profile_b -> maa run profile_b -p profile_b
 ```
 
-Therefore create matching maa-cli connection profiles and task JSONs, e.g.:
+因此需要创建名称一致的 maa-cli 连接 Profile 和任务 JSON，例如：
 
 ```text
 ~/.config/maa/profiles/profile_a.json
@@ -99,176 +108,161 @@ Therefore create matching maa-cli connection profiles and task JSONs, e.g.:
 ~/.config/maa/tasks/profile_b.json
 ```
 
-The profile JSONs can be copies of `default.json` with only
-`.connection.address` changed for each ADB endpoint.
+Profile JSON 可以从 `default.json` 复制，然后只修改每个 Profile 对应的：
 
-## 3. Install / update
+```text
+.connection.address
+```
 
-Run:
+以连接不同的 ADB 地址。
+
+
+## 3. 安装 / 更新
+
+运行：
 
 ```bash
 ./install.sh
 ```
 
-If no Python virtual environment is active, the installer creates `.venv`
-inside the repository. To force a specific Python:
+如果当前没有激活 Python 虚拟环境，安装程序会在项目目录中自动创建：
+
+```text
+.venv
+```
+
+如果需要强制使用指定的 Python：
 
 ```bash
 PYTHON=/home/ubuntu/Documents/.venv/bin/python ./install.sh
 ```
 
-The installer is idempotent. Rerun it after adding/removing authorized profile
-names or after changing the systemd setup.
+安装脚本支持重复执行。
 
-For user services and timers to run at boot even before login:
+当增加 / 删除授权 Profile，或者修改 systemd 配置后，可以重新运行：
+
+```bash
+./install.sh
+```
+
+如果希望用户级 Service 和 Timer 在系统启动后、用户尚未登录时也能运行，请执行一次：
 
 ```bash
 sudo loginctl enable-linger "$USER"
 ```
 
-This is a one-time host setting.
+这是主机级的一次性设置。
 
-## 4. Telegram commands
 
+### 全局 MAA 自动更新
+
+安装程序会创建一组全局 updater：
+
+```text
+maa-update.service
+maa-update.timer
+```
+
+Updater Service 会执行：
+
+```text
+maa self update
+maa update
+```
+
+Timer 可以配置为每天多次检查，例如：
+
+```ini
+OnCalendar=*-*-* 00,06,12,18:00:00
+```
+
+即每天：
+
+```text
+00:00
+06:00
+12:00
+18:00
+```
+
+检查一次更新。
+
+
+## 4. Telegram 命令
+命令为 /主 <次> <参数> 结构，以维持主命令数量的简洁。次命令会有提示如何使用。
+
+快速开始
 ```text
 /start
 /status
+```
 
+其他主命令
+```text
 /schedule
-/schedule set 00:33 06:33 14:33 17:33
-/schedule add 12:00
-/schedule remove 12:00
-/schedule on
-/schedule off
-
 /task
-/task long
-
 /fight
-/fight add 1-7
-/fight add 1-7 0
-/fight remove 5
-
 /log
-/log ON
-/log OFF
-/log FULL
-
 /lang
-/lang en
-/lang zh
-
 /run
 /stop
 /help
 ```
 
-### Fight insertion position
+## 5. Windows GUI 配置转换
 
-`/fight add STAGE` appends after the last existing Fight task.
-
-`/fight add STAGE 0` inserts before all existing Fight tasks.
-
-`/fight add STAGE 1` inserts after the first existing Fight, etc.
-
-`/fight remove INDEX` uses the overall task-sequence index and rejects the
-operation if that task is not a Fight.
-
-## 5. Log modes
-
-`OFF`
-: Send no automatic run logs.
-
-`ON`
-: Inspect only MAA subtask summary lines that were actually emitted. Send a
-Telegram message only for summary statuses other than `Completed`. Missing
-later tasks and systemd exit state are deliberately ignored, so manual stops
-are not inferred to be failures.
-
-`FULL`
-: Send the complete systemd journal for every MAA invocation.
-
-The inline Log button toggles `OFF <-> ON`. If currently `FULL`, clicking the
-button changes it to `OFF`. Enter FULL explicitly with `/log FULL`.
-
-Logs are filtered using the current systemd `InvocationID`, so previous runs
-are excluded.
-
-
-## UI language
-
-Language is persistent per profile in `profiles.yaml`:
-
-```yaml
-profile_a:
-  lang: "en"
-
-profile_b:
-  lang: "zh"
-```
-
-Change it from Telegram:
-
-```text
-/lang
-/lang en
-/lang zh
-```
-
-`/status` is an alias of `/start`.
-
-When `lang: "zh"` is selected, the bot's normal UI text, buttons, command
-descriptions, schedule/status pages, confirmations, and automatic log titles
-are shown in Chinese. Raw MAA/systemd log content and MAA task type/stage names
-are not translated.
-
-## 6. Windows GUI conversion
-
-Copy Windows:
+从 Windows 复制：
 
 ```text
 <MAA folder>\config\gui.new.json
 ```
 
-to Linux, then:
+到 Linux，然后执行：
 
 ```bash
 python tools/gui2cli.py gui.new.json \
   "$(maa dir config)/tasks/profile_a.json"
 ```
 
-The converter uses positional arguments:
+转换工具使用位置参数：
 
 ```text
 gui2cli.py INPUT OUTPUT
 ```
 
-## 7. Service management
+
+## 6. Service / Timer 管理
+
+查看所有 MAA 定时服务：
 
 ```bash
-systemctl --user status maa-telegram-bot.service
-systemctl --user restart maa-telegram-bot.service
-
-systemctl --user status maa-profile_a.service
-systemctl --user status maa-profile_b.service
-
 systemctl --user list-timers 'maa-*.timer' --all
 ```
 
-Bot daemon output:
-
+本项目管理的 systemd 单元
 ```bash
-journalctl --user \
-  -u maa-telegram-bot.service \
-  -n 100 --no-pager
+maa-telegram-bot.service
+maa-<profile>.service
+maa-<profile>.timer
+maa-update.service
+maa-update.timer
 ```
 
-## 8. Uninstall systemd setup
+## 7. 卸载 systemd 配置
+
+运行：
 
 ```bash
 ./uninstall.sh
 ```
 
-This removes only the systemd units managed by this project. It deliberately
-preserves your YAML configuration, maa-cli configuration/tasks/profiles, and
-project files.
+以下内容会被保留：
+
+- `telegram_config.yaml`
+- `authorized_chats.yaml`
+- `profiles.yaml`
+- `~/.config/maa/`
+- maa-cli Task
+- maa-cli Profile
+- 项目源代码
+- Python 虚拟环境
