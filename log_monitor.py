@@ -13,7 +13,7 @@ from i18n import text_for
 from maa_config import service_unit_for
 from profile_store import get_profile, load_profiles
 from systemd_utils import systemctl_value
-from telegram_ui import send_profile_preformatted
+from telegram_ui import PREFORMATTED_TEXT_LIMIT, send_profile_preformatted, split_text
 
 # ---------------------------------------------------------------------------
 # MaaCore log parsing
@@ -347,15 +347,81 @@ def task_result_text(
     return (f"[{task.taskid}] " f"{task.taskchain} " f"{status}")
 
 
+def chunk_task_results(
+        results: list[str],
+        max_chars: int = PREFORMATTED_TEXT_LIMIT,
+) -> list[str]:
+    """
+    Pack complete task results into Telegram-safe chunks.
+
+    A normal task result is never split between chunks. The
+    split_text fallback only applies if one result is already
+    larger than the complete safe text allowance.
+    """
+
+    if max_chars <= 0:
+        raise ValueError("max_chars must be positive")
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_length = 0
+
+    for result in results:
+        if not result:
+            continue
+
+        if len(result) > max_chars:
+            if current:
+                chunks.append("\n".join(current))
+                current = []
+                current_length = 0
+
+            chunks.extend(split_text(result, max_chars=max_chars, ))
+            continue
+
+        separator_length = (1 if current else 0)
+
+        if current and current_length + separator_length + len(result) > max_chars:
+            chunks.append("\n".join(current))
+            current = []
+            current_length = 0
+            separator_length = 0
+
+        current.append(result)
+        current_length += separator_length + len(result)
+
+    if current:
+        chunks.append("\n".join(current))
+
+    return chunks
+
+
 # ---------------------------------------------------------------------------
 # Telegram reporting
 # ---------------------------------------------------------------------------
 
+async def send_full_session_results(
+        application: Application,
+        name: str,
+        results: list[str],
+) -> None:
+    profile = get_profile(name)
+    title = text_for(profile.lang, "full_log_title", name=name, )
+    continued_word = text_for(profile.lang, "continued", )
+
+    for index, chunk in enumerate(chunk_task_results(results)):
+        chunk_title = (title if index == 0 else f"{title} ({continued_word})")
+
+        await send_profile_preformatted(application, name=name, title=chunk_title, text=chunk, )
+
+
 async def report_finished_task(
         application: Application,
         name: str,
+        pid: int,
         task: ActiveTask,
         event: str,
+        session_results: dict[int, list[str]],
 ) -> None:
     """
     Called immediately when MaaCore emits a
@@ -375,55 +441,71 @@ async def report_finished_task(
     # -------------------------------------------------------
 
     if mode == "OFF":
+        session_results.pop(pid, None, )
         return
 
     result = task_result_text(task, event, )
 
     # -------------------------------------------------------
-    # ON
+    # Shared ON / FULL workflow
     #
-    # Completed -> nothing
-    # Stopped   -> nothing
-    # Error     -> send immediately with failure details
+    # ON:
+    #   Completed / Stopped -> clear silently
+    #   Error               -> send error details
+    #
+    # FULL:
+    #   Completed -> buffer until the session ends
+    #   Stopped   -> add to the buffer and send the batch
+    #   Error     -> send the prior batch, then the error
     # -------------------------------------------------------
 
-    if mode == "ON":
-        if event != "TaskChainError":
+    if event == "TaskChainCompleted":
+        if mode == "FULL":
+            session_results.setdefault(pid, []).append(result)
+        else:
+            session_results.pop(pid, None, )
+        return
+
+    if event == "TaskChainStopped":
+        if mode != "FULL":
+            session_results.pop(pid, None, )
             return
 
-        details = failure_details(task)
+        buffered_results = session_results.setdefault(pid, [])
+        buffered_results.append(result)
 
+        try:
+            await send_full_session_results(application, name, buffered_results, )
+
+        finally:
+            session_results.pop(pid, None, )
+
+        return
+
+    if event != "TaskChainError":
+        return
+
+    buffered_results = session_results.get(pid, [])
+
+    try:
+        if mode == "FULL" and buffered_results:
+            await send_full_session_results(application, name, buffered_results, )
+
+        details = failure_details(task)
         text = result
 
         if details:
             text += ("\n\n" f"{details}")
 
-        await send_profile_preformatted(application, name=name, title=text_for(lang, "incomplete_log_title", name=name, ), text=text, )
+        await send_profile_preformatted(
+            application,
+            name=name,
+            title=text_for(lang, "incomplete_log_title", name=name, ),
+            text=text,
+        )
 
-        return
-
-    # -------------------------------------------------------
-    # FULL
-    #
-    # Completed -> short result
-    # Stopped   -> short result
-    # Error     -> result + failure details
-    #
-    # FULL means every MAA subtask is reported.
-    # It does NOT dump the full MaaCore debug log.
-    # -------------------------------------------------------
-
-    if mode == "FULL":
-        text = result
-
-        if event == "TaskChainError":
-            details = failure_details(task)
-
-            if details:
-                text += ("\n\n" f"{details}")
-
-        await send_profile_preformatted(application, name=name,
-                                        title=text_for(lang, "full_log_title", name=name, ), text=text, )
+    finally:
+        session_results.pop(pid, None, )
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +523,7 @@ async def process_log_line(
             int,
             ActiveTask,
         ],
+        session_results: dict[int, list[str]],
 ) -> None:
     line = strip_ansi(line)
 
@@ -524,7 +607,7 @@ async def process_log_line(
             task.failure_lines.append(failure_line)
 
     try:
-        await report_finished_task(application, name, task, event, )
+        await report_finished_task(application, name, pid, task, event, session_results, )
 
     finally:
         active_tasks.pop(pid, None, )
@@ -569,7 +652,31 @@ async def refresh_profile_pids(
     return active_pids
 
 
-def prune_stale_pids(pid_to_profile: dict[int, str,], active_tasks: dict[int, ActiveTask,], active_pids: set[int], ) -> None:
+def discard_inactive_session_results(
+        pid_to_profile: dict[int, str],
+        session_results: dict[int, list[str]],
+) -> None:
+    """Discard buffered results after a profile leaves FULL mode."""
+
+    for pid in list(session_results):
+        name = pid_to_profile.get(pid)
+
+        try:
+            mode = normalize_log_mode(get_profile(name).log) if name is not None else "OFF"
+        except Exception:
+            mode = "OFF"
+
+        if mode != "FULL":
+            session_results.pop(pid, None, )
+
+
+async def prune_stale_pids(
+        application: Application,
+        pid_to_profile: dict[int, str],
+        active_tasks: dict[int, ActiveTask],
+        session_results: dict[int, list[str]],
+        active_pids: set[int],
+) -> None:
     """
     Remove mappings for worker processes that
     are no longer running.
@@ -582,9 +689,22 @@ def prune_stale_pids(pid_to_profile: dict[int, str,], active_tasks: dict[int, Ac
         if pid in active_pids:
             continue
 
-        pid_to_profile.pop(pid, None, )
+        name = pid_to_profile.get(pid)
+        results = session_results.get(pid, [])
 
-        active_tasks.pop(pid, None, )
+        try:
+            if name is not None and results and normalize_log_mode(get_profile(name).log) == "FULL":
+                await send_full_session_results(application, name, results, )
+
+        except Exception:
+            # A Telegram failure must not stop monitoring
+            # other managed workers.
+            pass
+
+        finally:
+            pid_to_profile.pop(pid, None, )
+            active_tasks.pop(pid, None, )
+            session_results.pop(pid, None, )
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +724,10 @@ async def log_monitor_loop(
     # Maa process PID -> currently running
     # top-level TaskChain
     active_tasks: dict[int, ActiveTask,] = {}
+
+    # Maa process PID -> task results waiting for a
+    # mode-specific session boundary.
+    session_results: dict[int, list[str]] = {}
     profile_names = tuple(load_profiles())
 
     try:
@@ -623,13 +747,24 @@ async def log_monitor_loop(
                 )
             )
 
+            discard_inactive_session_results(
+                pid_to_profile,
+                session_results,
+            )
+
             # Read only newly appended MaaCore
             # log lines.
             lines = await asyncio.to_thread(read_new_log_lines, log_path, cursor, )
 
             for line in lines:
                 try:
-                    await process_log_line(application, line, pid_to_profile, active_tasks, )
+                    await process_log_line(
+                        application,
+                        line,
+                        pid_to_profile,
+                        active_tasks,
+                        session_results,
+                    )
 
                 except Exception:
                     # One malformed log line must
@@ -639,9 +774,11 @@ async def log_monitor_loop(
             # Now that newly written lines have
             # been processed, old PID mappings
             # can safely be discarded.
-            prune_stale_pids(
+            await prune_stale_pids(
+                application,
                 pid_to_profile,
                 active_tasks,
+                session_results,
                 active_pids,
             )
 

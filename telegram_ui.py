@@ -12,6 +12,8 @@ from maa_config import TIMEZONE, service_unit_for
 from profile_store import get_profile
 from systemd_utils import next_run, service_result, unit_is_active
 
+PREFORMATTED_TEXT_LIMIT = 3400
+
 
 def html_pre(text: str) -> str:
     return (f"<pre>{html.escape(text)}</pre>")
@@ -25,7 +27,7 @@ def html_code_lines(lines: Iterable[str], ) -> str:
     return "\n".join(html_code(line) for line in lines)
 
 
-def split_text(text: str, max_chars: int = 3400, ) -> list[str]:
+def split_text(text: str, max_chars: int = PREFORMATTED_TEXT_LIMIT, ) -> list[str]:
     if len(text) <= max_chars:
         return [text]
 
