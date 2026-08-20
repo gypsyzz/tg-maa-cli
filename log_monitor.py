@@ -10,19 +10,10 @@ from pathlib import Path
 from telegram.ext import Application
 
 from i18n import text_for
-from maa_config import (
-    AUTHORIZED_BY_NAME,
-    service_unit_for,
-)
-from profile_store import (
-    get_profile,
-)
-from systemd_utils import (
-    systemctl_value,
-)
-from telegram_ui import (
-    send_profile_preformatted,
-)
+from maa_config import AUTHORIZED_BY_NAME, service_unit_for
+from profile_store import get_profile
+from systemd_utils import systemctl_value
+from telegram_ui import send_profile_preformatted
 
 # ---------------------------------------------------------------------------
 # MaaCore log parsing
@@ -32,32 +23,13 @@ ANSI_RE = re.compile(
     r"\x1b\[[0-?]*[ -/]*[@-~]"
 )
 
-PID_RE = re.compile(
-    r"\[Px(?P<pid>\d+)\]"
-)
+PID_RE = re.compile(r"\[Px(?P<pid>\d+)\]")
 
-TASKCHAIN_CALLBACK_RE = re.compile(
-    r"Assistant::append_callback \| "
-    r"(?P<event>"
-    r"TaskChainStart|"
-    r"TaskChainCompleted|"
-    r"TaskChainError|"
-    r"TaskChainStopped"
-    r") "
-    r"(?P<payload>\{.*\})\s*$"
-)
+TASKCHAIN_CALLBACK_RE = re.compile(r"Assistant::append_callback \| " r"(?P<event>" r"TaskChainStart|" r"TaskChainCompleted|" r"TaskChainError|" r"TaskChainStopped" r") " r"(?P<payload>\{.*\})\s*$")
 
-TERMINAL_EVENTS = {
-    "TaskChainCompleted",
-    "TaskChainError",
-    "TaskChainStopped",
-}
+TERMINAL_EVENTS = {"TaskChainCompleted", "TaskChainError", "TaskChainStopped", }
 
-EVENT_STATUS = {
-    "TaskChainCompleted": "Completed",
-    "TaskChainError": "Error",
-    "TaskChainStopped": "Stopped",
-}
+EVENT_STATUS = {"TaskChainCompleted": "Completed", "TaskChainError": "Error", "TaskChainStopped": "Stopped", }
 
 # Lines worth retaining when diagnosing a failed task.
 #
@@ -121,15 +93,10 @@ class ActiveTask:
 def strip_ansi(
         text: str,
 ) -> str:
-    return ANSI_RE.sub(
-        "",
-        text,
-    )
+    return ANSI_RE.sub("", text, )
 
 
-def normalize_log_mode(
-        value,
-) -> str:
+def normalize_log_mode(value, ) -> str:
     # YAML may interpret unquoted ON/OFF
     # as bool values.
     if value is True:
@@ -138,15 +105,9 @@ def normalize_log_mode(
     if value is False:
         return "OFF"
 
-    mode = str(
-        value
-    ).strip().upper()
+    mode = str(value).strip().upper()
 
-    if mode not in {
-        "OFF",
-        "ON",
-        "FULL",
-    }:
+    if mode not in {"OFF", "ON", "FULL", }:
         return "OFF"
 
     return mode
@@ -167,52 +128,26 @@ async def resolve_asst_log_path() -> Path:
         ~/.local/state/maa/debug/asst.log
     """
 
-    maa_bin = shutil.which(
-        "maa"
-    )
+    maa_bin = shutil.which("maa")
 
     if not maa_bin:
-        candidate = (
-                Path.home()
-                / ".local"
-                / "bin"
-                / "maa"
-        )
+        candidate = (Path.home() / ".local" / "bin" / "maa")
 
         if candidate.is_file():
-            maa_bin = str(
-                candidate
-            )
+            maa_bin = str(candidate)
 
     if maa_bin:
         try:
-            process = await asyncio.create_subprocess_exec(
-                maa_bin,
-                "dir",
-                "log",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
+            process = await asyncio.create_subprocess_exec(maa_bin, "dir", "log",
+                                                           stdout=asyncio.subprocess.PIPE,
+                                                           stderr=asyncio.subprocess.DEVNULL, )
 
-            stdout, _ = (
-                await process.communicate()
-            )
+            stdout, _ = (await process.communicate())
 
-            if (
-                    process.returncode == 0
-                    and stdout
-            ):
-                log_dir = Path(
-                    stdout.decode(
-                        "utf-8",
-                        errors="replace",
-                    ).strip()
-                )
+            if (process.returncode == 0 and stdout):
+                log_dir = Path(stdout.decode("utf-8", errors="replace", ).strip())
 
-                return (
-                        log_dir
-                        / "asst.log"
-                )
+                return (log_dir / "asst.log")
 
         except Exception:
             pass
@@ -228,9 +163,7 @@ async def resolve_asst_log_path() -> Path:
     )
 
 
-def initial_cursor(
-        path: Path,
-) -> LogCursor:
+def initial_cursor(path: Path, ) -> LogCursor:
     """
     Begin at EOF so restarting the Telegram bot
     does not replay old MaaCore tasks.
@@ -241,16 +174,10 @@ def initial_cursor(
     except OSError:
         return LogCursor()
 
-    return LogCursor(
-        inode=stat.st_ino,
-        offset=stat.st_size,
-    )
+    return LogCursor(inode=stat.st_ino, offset=stat.st_size, )
 
 
-def read_new_log_lines(
-        path: Path,
-        cursor: LogCursor,
-) -> list[str]:
+def read_new_log_lines(path: Path, cursor: LogCursor, ) -> list[str]:
     """
     Incrementally read newly appended data from
     MaaCore's asst.log.
@@ -271,18 +198,12 @@ def read_new_log_lines(
         cursor.partial = b""
 
     try:
-        with path.open(
-                "rb"
-        ) as file:
-            file.seek(
-                cursor.offset
-            )
+        with path.open("rb") as file:
+            file.seek(cursor.offset)
 
             data = file.read()
 
-            cursor.offset = (
-                file.tell()
-            )
+            cursor.offset = (file.tell())
 
     except OSError:
         return []
@@ -290,14 +211,9 @@ def read_new_log_lines(
     if not data:
         return []
 
-    data = (
-            cursor.partial
-            + data
-    )
+    data = (cursor.partial + data)
 
-    parts = data.split(
-        b"\n"
-    )
+    parts = data.split(b"\n")
 
     # The final piece may still be an
     # incomplete line.
@@ -305,13 +221,7 @@ def read_new_log_lines(
         parts.pop()
     )
 
-    return [
-        part.decode(
-            "utf-8",
-            errors="replace",
-        )
-        for part in parts
-    ]
+    return [part.decode("utf-8", errors="replace", ) for part in parts]
 
 
 # ---------------------------------------------------------------------------
@@ -329,27 +239,15 @@ def parse_pid(
     -> 3308182
     """
 
-    match = PID_RE.search(
-        line
-    )
+    match = PID_RE.search(line)
 
     if not match:
         return None
 
-    return int(
-        match.group(
-            "pid"
-        )
-    )
+    return int(match.group("pid"))
 
 
-def parse_taskchain_callback(
-        line: str,
-) -> tuple[
-         str,
-         str,
-         int,
-     ] | None:
+def parse_taskchain_callback(line: str, ) -> tuple[str, str, int,] | None:
     """
     Parse top-level MaaCore task callbacks:
 
@@ -362,56 +260,27 @@ def parse_taskchain_callback(
     not considered task completion events.
     """
 
-    match = (
-        TASKCHAIN_CALLBACK_RE.search(
-            line
-        )
-    )
+    match = (TASKCHAIN_CALLBACK_RE.search(line))
 
     if not match:
         return None
 
     try:
-        payload = json.loads(
-            match.group(
-                "payload"
-            )
-        )
-    except (
-            json.JSONDecodeError,
-            TypeError,
-    ):
+        payload = json.loads(match.group("payload"))
+    except (json.JSONDecodeError, TypeError,):
         return None
 
-    taskchain = str(
-        payload.get(
-            "taskchain",
-            "",
-        )
-    ).strip()
+    taskchain = str(payload.get("taskchain", "", )).strip()
 
     try:
-        taskid = int(
-            payload.get(
-                "taskid"
-            )
-        )
-    except (
-            TypeError,
-            ValueError,
-    ):
+        taskid = int(payload.get("taskid"))
+    except (TypeError, ValueError,):
         return None
 
     if not taskchain:
         return None
 
-    return (
-        match.group(
-            "event"
-        ),
-        taskchain,
-        taskid,
-    )
+    return (match.group("event"), taskchain, taskid,)
 
 
 # ---------------------------------------------------------------------------
@@ -427,13 +296,9 @@ def extract_failure_line(
     Normal MaaCore debug lines return None.
     """
 
-    line = strip_ansi(
-        line
-    ).strip()
+    line = strip_ansi(line).strip()
 
-    if not FAILURE_LINE_RE.search(
-            line
-    ):
+    if not FAILURE_LINE_RE.search(line):
         return None
 
     # Remove timestamp / level / PID / thread prefix.
@@ -452,17 +317,12 @@ def extract_failure_line(
     )
 
     if marker in line:
-        line = line.split(
-            marker,
-            1,
-        )[1]
+        line = line.split(marker, 1, )[1]
 
     return line.strip()
 
 
-def failure_details(
-        task: ActiveTask,
-) -> str:
+def failure_details(task: ActiveTask, ) -> str:
     """
     Return only actual failure/error-related
     lines collected during this task.
@@ -471,9 +331,7 @@ def failure_details(
     if not task.failure_lines:
         return ""
 
-    return "\n".join(
-        task.failure_lines
-    )
+    return "\n".join(task.failure_lines)
 
 
 # ---------------------------------------------------------------------------
@@ -484,16 +342,9 @@ def task_result_text(
         task: ActiveTask,
         event: str,
 ) -> str:
-    status = EVENT_STATUS.get(
-        event,
-        event,
-    )
+    status = EVENT_STATUS.get(event, event, )
 
-    return (
-        f"[{task.taskid}] "
-        f"{task.taskchain} "
-        f"{status}"
-    )
+    return (f"[{task.taskid}] " f"{task.taskchain} " f"{status}")
 
 
 # ---------------------------------------------------------------------------
@@ -511,13 +362,9 @@ async def report_finished_task(
     terminal TaskChain event.
     """
 
-    profile = get_profile(
-        name
-    )
+    profile = get_profile(name)
 
-    mode = normalize_log_mode(
-        profile.log
-    )
+    mode = normalize_log_mode(profile.log)
 
     lang = profile.lang
 
@@ -530,10 +377,7 @@ async def report_finished_task(
     if mode == "OFF":
         return
 
-    result = task_result_text(
-        task,
-        event,
-    )
+    result = task_result_text(task, event, )
 
     # -------------------------------------------------------
     # ON
@@ -547,28 +391,14 @@ async def report_finished_task(
         if event != "TaskChainError":
             return
 
-        details = failure_details(
-            task
-        )
+        details = failure_details(task)
 
         text = result
 
         if details:
-            text += (
-                "\n\n"
-                f"{details}"
-            )
+            text += ("\n\n" f"{details}")
 
-        await send_profile_preformatted(
-            application,
-            name=name,
-            title=text_for(
-                lang,
-                "incomplete_log_title",
-                name=name,
-            ),
-            text=text,
-        )
+        await send_profile_preformatted(application, name=name, title=text_for(lang, "incomplete_log_title", name=name, ), text=text, )
 
         return
 
@@ -587,26 +417,13 @@ async def report_finished_task(
         text = result
 
         if event == "TaskChainError":
-            details = failure_details(
-                task
-            )
+            details = failure_details(task)
 
             if details:
-                text += (
-                    "\n\n"
-                    f"{details}"
-                )
+                text += ("\n\n" f"{details}")
 
-        await send_profile_preformatted(
-            application,
-            name=name,
-            title=text_for(
-                lang,
-                "full_log_title",
-                name=name,
-            ),
-            text=text,
-        )
+        await send_profile_preformatted(application, name=name,
+                                        title=text_for(lang, "full_log_title", name=name, ), text=text, )
 
 
 # ---------------------------------------------------------------------------
@@ -625,20 +442,14 @@ async def process_log_line(
             ActiveTask,
         ],
 ) -> None:
-    line = strip_ansi(
-        line
-    )
+    line = strip_ansi(line)
 
-    pid = parse_pid(
-        line
-    )
+    pid = parse_pid(line)
 
     if pid is None:
         return
 
-    name = pid_to_profile.get(
-        pid
-    )
+    name = pid_to_profile.get(pid)
 
     # Ignore MAA processes that are not one
     # of our managed systemd profile workers.
@@ -659,17 +470,10 @@ async def process_log_line(
         pid
     )
 
-    failure_line = extract_failure_line(
-        line
-    )
+    failure_line = extract_failure_line(line)
 
-    if (
-            current is not None
-            and failure_line is not None
-    ):
-        current.failure_lines.append(
-            failure_line
-        )
+    if (current is not None and failure_line is not None):
+        current.failure_lines.append(failure_line)
 
     # -------------------------------------------------------
     # Parse top-level TaskChain event
@@ -684,23 +488,14 @@ async def process_log_line(
     if callback is None:
         return
 
-    (
-        event,
-        taskchain,
-        taskid,
-    ) = callback
+    (event, taskchain, taskid,) = callback
 
     # -------------------------------------------------------
     # Task started
     # -------------------------------------------------------
 
     if event == "TaskChainStart":
-        active_tasks[
-            pid
-        ] = ActiveTask(
-            taskchain=taskchain,
-            taskid=taskid,
-        )
+        active_tasks[pid] = ActiveTask(taskchain=taskchain, taskid=taskid, )
 
         return
 
@@ -712,9 +507,7 @@ async def process_log_line(
     if event not in TERMINAL_EVENTS:
         return
 
-    task = active_tasks.get(
-        pid
-    )
+    task = active_tasks.get(pid)
 
     # Bot may have restarted while MAA was
     # already executing the task.
@@ -723,31 +516,18 @@ async def process_log_line(
             or task.taskid != taskid
             or task.taskchain != taskchain
     ):
-        task = ActiveTask(
-            taskchain=taskchain,
-            taskid=taskid,
-        )
+        task = ActiveTask(taskchain=taskchain, taskid=taskid, )
 
         # If this terminal line itself is an
         # error line, preserve it.
         if failure_line is not None:
-            task.failure_lines.append(
-                failure_line
-            )
+            task.failure_lines.append(failure_line)
 
     try:
-        await report_finished_task(
-            application,
-            name,
-            task,
-            event,
-        )
+        await report_finished_task(application, name, task, event, )
 
     finally:
-        active_tasks.pop(
-            pid,
-            None,
-        )
+        active_tasks.pop(pid, None, )
 
 
 # ---------------------------------------------------------------------------
@@ -768,52 +548,27 @@ async def refresh_profile_pids(
     active_pids: set[int] = set()
 
     for name in AUTHORIZED_BY_NAME:
-        unit = service_unit_for(
-            name
-        )
+        unit = service_unit_for(name)
 
         try:
-            value = await systemctl_value(
-                unit,
-                "MainPID",
-            )
+            value = await systemctl_value(unit, "MainPID", )
 
-            pid = int(
-                value or 0
-            )
+            pid = int(value or 0)
 
-        except (
-                Exception,
-                TypeError,
-                ValueError,
-        ):
+        except (Exception, TypeError, ValueError,):
             continue
 
         if pid <= 0:
             continue
 
-        pid_to_profile[
-            pid
-        ] = name
+        pid_to_profile[pid] = name
 
-        active_pids.add(
-            pid
-        )
+        active_pids.add(pid)
 
     return active_pids
 
 
-def prune_stale_pids(
-        pid_to_profile: dict[
-            int,
-            str,
-        ],
-        active_tasks: dict[
-            int,
-            ActiveTask,
-        ],
-        active_pids: set[int],
-) -> None:
+def prune_stale_pids(pid_to_profile: dict[int, str,], active_tasks: dict[int, ActiveTask,], active_pids: set[int], ) -> None:
     """
     Remove mappings for worker processes that
     are no longer running.
@@ -822,21 +577,13 @@ def prune_stale_pids(
     future unrelated process with an old profile.
     """
 
-    for pid in list(
-            pid_to_profile
-    ):
+    for pid in list(pid_to_profile):
         if pid in active_pids:
             continue
 
-        pid_to_profile.pop(
-            pid,
-            None,
-        )
+        pid_to_profile.pop(pid, None, )
 
-        active_tasks.pop(
-            pid,
-            None,
-        )
+        active_tasks.pop(pid, None, )
 
 
 # ---------------------------------------------------------------------------
@@ -846,26 +593,16 @@ def prune_stale_pids(
 async def log_monitor_loop(
         application: Application,
 ) -> None:
-    log_path = (
-        await resolve_asst_log_path()
-    )
+    log_path = (await resolve_asst_log_path())
 
-    cursor = initial_cursor(
-        log_path
-    )
+    cursor = initial_cursor(log_path)
 
     # Maa process PID -> profile
-    pid_to_profile: dict[
-        int,
-        str,
-    ] = {}
+    pid_to_profile: dict[int, str,] = {}
 
     # Maa process PID -> currently running
     # top-level TaskChain
-    active_tasks: dict[
-        int,
-        ActiveTask,
-    ] = {}
+    active_tasks: dict[int, ActiveTask,] = {}
 
     try:
         while True:
@@ -885,20 +622,11 @@ async def log_monitor_loop(
 
             # Read only newly appended MaaCore
             # log lines.
-            lines = await asyncio.to_thread(
-                read_new_log_lines,
-                log_path,
-                cursor,
-            )
+            lines = await asyncio.to_thread(read_new_log_lines, log_path, cursor, )
 
             for line in lines:
                 try:
-                    await process_log_line(
-                        application,
-                        line,
-                        pid_to_profile,
-                        active_tasks,
-                    )
+                    await process_log_line(application, line, pid_to_profile, active_tasks, )
 
                 except Exception:
                     # One malformed log line must
@@ -914,9 +642,7 @@ async def log_monitor_loop(
                 active_pids,
             )
 
-            await asyncio.sleep(
-                0.5
-            )
+            await asyncio.sleep(0.5)
 
     except asyncio.CancelledError:
         return

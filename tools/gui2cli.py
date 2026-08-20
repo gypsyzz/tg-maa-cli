@@ -4,20 +4,9 @@ import json
 import sys
 from pathlib import Path
 
-SERVER_MAP = {
-    "Official": "CN",
-    "Bilibili": "CN",
-    "txwy": "CN",
-    "YoStarEN": "US",
-    "YoStarJP": "JP",
-    "YoStarKR": "KR",
-}
+SERVER_MAP = {"Official": "CN", "Bilibili": "CN", "txwy": "CN", "YoStarEN": "US", "YoStarJP": "JP", "YoStarKR": "KR", }
 
-INFRast_MODE_MAP = {
-    "Default": 0,
-    "Custom": 10000,
-    "Rotation": 20000,
-}
+INFRast_MODE_MAP = {"Default": 0, "Custom": 10000, "Rotation": 20000, }
 
 # WPF stores several credit-store item names using English canonical labels,
 # while the CN MaaCore task parameters use the in-game Chinese names.
@@ -52,35 +41,24 @@ def convert(src):
         name = task.get("Name") or None
 
         if task_type == "StartUp":
-            params = {
-                "client_type": client_type,
-                "start_game_enabled": bool(runtime.get("StartGame", False)),
-            }
+            params = {"client_type": client_type, "start_game_enabled": bool(runtime.get("StartGame", False)), }
             if task.get("AccountSwitchEnabled") and task.get("AccountName"):
                 params["account_name"] = task["AccountName"]
 
             converted = {"type": "StartUp", "params": params}
 
         elif task_type == "Award":
-            converted = {
-                "type": "Award",
-                "params": {
-                    "award": task.get("Award", True),
-                    "mail": task.get("Mail", False),
-                    "recruit": task.get("FreeGacha", False),
-                    "orundum": task.get("Orundum", False),
-                    "mining": task.get("Mining", False),
-                    "specialaccess": task.get("SpecialAccess", False),
-                },
-            }
+            converted = {"type": "Award", "params": {"award": task.get("Award", True), "mail": task.get("Mail", False),
+                                                     "recruit": task.get("FreeGacha", False),
+                                                     "orundum": task.get("Orundum", False),
+                                                     "mining": task.get("Mining", False),
+                                                     "specialaccess": task.get("SpecialAccess", False), }, }
 
         elif task_type == "Fight":
             stages = task.get("StagePlan") or []
             if len(stages) > 1:
                 raise ValueError(
-                    f"Fight task {name!r} has multiple StagePlan entries {stages}; "
-                    "that WPF behavior is not safe to flatten automatically."
-                )
+                    f"Fight task {name!r} has multiple StagePlan entries {stages}; " "that WPF behavior is not safe to flatten automatically.")
 
             params = {
                 "stage": stages[0] if stages else "",
@@ -107,12 +85,8 @@ def convert(src):
 
             if task.get("EnableTargetDrop") and task.get("DropId"):
                 if task.get("IsInventoryTarget"):
-                    raise ValueError(
-                        "Inventory-target Fight mode has no direct mapping in this converter."
-                    )
-                params["drops"] = {
-                    task["DropId"]: task.get("DropCount", 0)
-                }
+                    raise ValueError("Inventory-target Fight mode has no direct mapping in this converter.")
+                params["drops"] = {task["DropId"]: task.get("DropCount", 0)}
 
             converted = {"type": "Fight", "params": params}
 
@@ -148,19 +122,12 @@ def convert(src):
                 params["plan_index"] = task.get("PlanSelect", 0)
 
             if task.get("ContinueTraining"):
-                warnings.append(
-                    "Infrast ContinueTraining=true has no documented "
-                    "direct MaaCore Infrast parameter."
-                )
+                warnings.append("Infrast ContinueTraining=true has no documented " "direct MaaCore Infrast parameter.")
 
             converted = {"type": "Infrast", "params": params}
 
         elif task_type == "Recruit":
-            confirm = [
-                level
-                for level in (3, 4, 5, 6)
-                if task.get(f"Level{level}Choose", False)
-            ]
+            confirm = [level for level in (3, 4, 5, 6) if task.get(f"Level{level}Choose", False)]
 
             # WPF-style normal selection: pick 4/5-star tag combinations;
             # 3-star tags are only selected when preferred-tag behavior is enabled.
@@ -202,21 +169,13 @@ def convert(src):
 
             if task.get("ForceRefresh"):
                 warnings.append(
-                    "Recruit ForceRefresh=true is WPF-specific; "
-                    "MaaCore CLI exposes refresh but no ForceRefresh parameter."
-                )
+                    "Recruit ForceRefresh=true is WPF-specific; " "MaaCore CLI exposes refresh but no ForceRefresh parameter.")
 
             converted = {"type": "Recruit", "params": params}
 
         elif task_type == "Mall":
-            buy_first = [
-                ITEM_NAME_MAP.get(x, x)
-                for x in split_list(task.get("FirstList"))
-            ]
-            blacklist = [
-                ITEM_NAME_MAP.get(x, x)
-                for x in split_list(task.get("BlackList"))
-            ]
+            buy_first = [ITEM_NAME_MAP.get(x, x) for x in split_list(task.get("FirstList"))]
+            blacklist = [ITEM_NAME_MAP.get(x, x) for x in split_list(task.get("BlackList"))]
 
             converted = {
                 "type": "Mall",
@@ -243,19 +202,13 @@ def convert(src):
 
         elif task_type == "UserDataUpdate":
             if task.get("UpdateOperBox"):
-                result.append(
-                    {"type": "OperBox", "params": {"enable": True}}
-                )
+                result.append({"type": "OperBox", "params": {"enable": True}})
             if task.get("UpdateDepot"):
-                result.append(
-                    {"type": "Depot", "params": {"enable": True}}
-                )
+                result.append({"type": "Depot", "params": {"enable": True}})
             continue
 
         else:
-            raise ValueError(
-                f"Unsupported enabled WPF task type: {task_type}"
-            )
+            raise ValueError(f"Unsupported enabled WPF task type: {task_type}")
 
         if name:
             converted["name"] = name
@@ -266,9 +219,7 @@ def convert(src):
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Convert MAA WPF gui.new.json to a maa-cli custom task."
-    )
+    parser = argparse.ArgumentParser(description="Convert MAA WPF gui.new.json to a maa-cli custom task.")
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
@@ -277,10 +228,7 @@ def main():
     profile, converted, warnings = convert(src)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(converted, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    args.output.write_text(json.dumps(converted, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", )
 
     print(f"Converted WPF profile {profile!r} -> {args.output}")
     for warning in warnings:

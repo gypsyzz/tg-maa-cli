@@ -7,15 +7,9 @@ import re
 import yaml
 
 from i18n import normalize_language
-from maa_config import (
-    AUTHORIZED_BY_NAME,
-    PROFILES_PATH,
-    validate_name,
-)
+from maa_config import AUTHORIZED_BY_NAME, PROFILES_PATH, validate_name
 
-TIME_RE = re.compile(
-    r"^(?:[01]\d|2[0-3]):[0-5]\d$"
-)
+TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 LOG_MODES = {"OFF", "ON", "FULL"}
 
 
@@ -32,97 +26,53 @@ class ProfileState:
     lang: str
 
 
-def normalize_times(
-        values: Iterable[object],
-) -> list[str]:
+def normalize_times(values: Iterable[object], ) -> list[str]:
     times: list[str] = []
 
     for raw in values:
         value = str(raw).strip()
 
         if not TIME_RE.fullmatch(value):
-            raise ValueError(
-                f"Invalid time {value!r}; "
-                "use HH:MM, e.g. 06:33."
-            )
+            raise ValueError(f"Invalid time {value!r}; " "use HH:MM, e.g. 06:33.")
 
         if value not in times:
             times.append(value)
 
-    return sorted(
-        times,
-        key=lambda value: tuple(
-            map(int, value.split(":"))
-        ),
-    )
+    return sorted(times, key=lambda value: tuple(map(int, value.split(":"))), )
 
 
 def default_profile() -> ProfileState:
-    return ProfileState(
-        schedule=ScheduleState(
-            enabled=False,
-            times=[],
-        ),
-        log="OFF",
-        lang="en",
-    )
+    return ProfileState(schedule=ScheduleState(enabled=False, times=[], ), log="OFF", lang="en", )
 
 
-def parse_profile(
-        name: str,
-        raw: object,
-) -> ProfileState:
+def parse_profile(name: str, raw: object, ) -> ProfileState:
     if raw is None:
         return default_profile()
 
     if not isinstance(raw, dict):
-        raise ValueError(
-            f"{PROFILES_PATH}: {name} must be a mapping."
-        )
+        raise ValueError(f"{PROFILES_PATH}: {name} must be a mapping.")
 
     raw_schedule = raw.get("schedule")
 
     if raw_schedule is None:
-        schedule = ScheduleState(
-            enabled=False,
-            times=[],
-        )
+        schedule = ScheduleState(enabled=False, times=[], )
 
     elif isinstance(raw_schedule, dict):
-        if (
-                "enable" in raw_schedule
-                and "enabled" not in raw_schedule
-        ):
-            raise ValueError(
-                f"{PROFILES_PATH}: {name}.schedule uses 'enable'; "
-                "use 'enabled' instead."
-            )
+        if ("enable" in raw_schedule and "enabled" not in raw_schedule):
+            raise ValueError(f"{PROFILES_PATH}: {name}.schedule uses 'enable'; " "use 'enabled' instead.")
 
         raw_times = raw_schedule.get("times") or []
 
         if not isinstance(raw_times, list):
-            raise ValueError(
-                f"{PROFILES_PATH}: "
-                f"{name}.schedule.times must be a list."
-            )
+            raise ValueError(f"{PROFILES_PATH}: " f"{name}.schedule.times must be a list.")
 
         times = normalize_times(raw_times)
-        enabled = (
-            bool(raw_schedule.get("enabled", False))
-            if times
-            else False
-        )
+        enabled = (bool(raw_schedule.get("enabled", False)) if times else False)
 
-        schedule = ScheduleState(
-            enabled=enabled,
-            times=times,
-        )
+        schedule = ScheduleState(enabled=enabled, times=times, )
 
     else:
-        raise ValueError(
-            f"{PROFILES_PATH}: "
-            f"{name}.schedule must be a mapping."
-        )
+        raise ValueError(f"{PROFILES_PATH}: " f"{name}.schedule must be a mapping.")
 
     raw_log = raw.get("log", "OFF")
 
@@ -133,20 +83,11 @@ def parse_profile(
         log_mode = str(raw_log).upper()
 
     if log_mode not in LOG_MODES:
-        raise ValueError(
-            f"{PROFILES_PATH}: {name}.log must be "
-            "OFF, ON, or FULL."
-        )
+        raise ValueError(f"{PROFILES_PATH}: {name}.log must be " "OFF, ON, or FULL.")
 
-    language = normalize_language(
-        raw.get("lang", "en")
-    )
+    language = normalize_language(raw.get("lang", "en"))
 
-    return ProfileState(
-        schedule=schedule,
-        log=log_mode,
-        lang=language,
-    )
+    return ProfileState(schedule=schedule, log=log_mode, lang=language, )
 
 
 def load_profiles() -> dict[str, ProfileState]:
@@ -160,104 +101,53 @@ def load_profiles() -> dict[str, ProfileState]:
         data = {}
 
     if not isinstance(data, dict):
-        raise ValueError(
-            f"{PROFILES_PATH} must map names to profile settings."
-        )
+        raise ValueError(f"{PROFILES_PATH} must map names to profile settings.")
 
     profiles: dict[str, ProfileState] = {}
 
     for raw_name, raw_profile in data.items():
         name = validate_name(raw_name)
-        profiles[name] = parse_profile(
-            name,
-            raw_profile,
-        )
+        profiles[name] = parse_profile(name, raw_profile, )
 
     for name in AUTHORIZED_BY_NAME:
-        profiles.setdefault(
-            name,
-            default_profile(),
-        )
+        profiles.setdefault(name, default_profile(), )
 
     return profiles
 
 
-def save_profiles(
-        profiles: dict[str, ProfileState],
-) -> None:
+def save_profiles(profiles: dict[str, ProfileState], ) -> None:
     data: dict[str, dict] = {}
 
     for name, profile in profiles.items():
         validate_name(name)
 
-        times = normalize_times(
-            profile.schedule.times
-        )
+        times = normalize_times(profile.schedule.times)
 
-        data[name] = {
-            "schedule": {
-                "enabled": (
-                    bool(profile.schedule.enabled)
-                    if times
-                    else False
-                ),
-                "times": times,
-            },
-            "log": profile.log.upper(),
-            "lang": normalize_language(profile.lang),
-        }
+        data[name] = {"schedule": {"enabled": (bool(profile.schedule.enabled) if times else False), "times": times, },
+                      "log": profile.log.upper(), "lang": normalize_language(profile.lang), }
 
-    PROFILES_PATH.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
+    PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True, )
 
-    tmp = PROFILES_PATH.with_suffix(
-        PROFILES_PATH.suffix + ".tmp"
-    )
+    tmp = PROFILES_PATH.with_suffix(PROFILES_PATH.suffix + ".tmp")
 
-    tmp.write_text(
-        yaml.safe_dump(
-            data,
-            allow_unicode=True,
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
+    tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False, ), encoding="utf-8", )
 
     tmp.replace(PROFILES_PATH)
 
 
 def ensure_profiles_file() -> None:
-    save_profiles(
-        load_profiles()
-    )
+    save_profiles(load_profiles())
 
 
 def get_profile(name: str) -> ProfileState:
-    return load_profiles().get(
-        name,
-        default_profile(),
-    )
+    return load_profiles().get(name, default_profile(), )
 
 
-def set_schedule(
-        name: str,
-        *,
-        times: Iterable[object] | None = None,
-        enabled: bool | None = None,
-) -> ScheduleState:
+def set_schedule(name: str, *, times: Iterable[object] | None = None, enabled: bool | None = None, ) -> ScheduleState:
     profiles = load_profiles()
-    profile = profiles.get(
-        name,
-        default_profile(),
-    )
+    profile = profiles.get(name, default_profile(), )
 
-    new_times = (
-        profile.schedule.times
-        if times is None
-        else normalize_times(times)
-    )
+    new_times = (profile.schedule.times if times is None else normalize_times(times))
 
     if not new_times:
         new_enabled = False
@@ -266,10 +156,7 @@ def set_schedule(
     else:
         new_enabled = bool(enabled)
 
-    profile.schedule = ScheduleState(
-        enabled=new_enabled,
-        times=new_times,
-    )
+    profile.schedule = ScheduleState(enabled=new_enabled, times=new_times, )
 
     profiles[name] = profile
     save_profiles(profiles)
@@ -281,22 +168,14 @@ def get_log_mode(name: str) -> str:
     return get_profile(name).log
 
 
-def set_log_mode(
-        name: str,
-        mode: str,
-) -> str:
+def set_log_mode(name: str, mode: str, ) -> str:
     mode = mode.upper()
 
     if mode not in LOG_MODES:
-        raise ValueError(
-            "Log mode must be OFF, ON, or FULL."
-        )
+        raise ValueError("Log mode must be OFF, ON, or FULL.")
 
     profiles = load_profiles()
-    profile = profiles.get(
-        name,
-        default_profile(),
-    )
+    profile = profiles.get(name, default_profile(), )
 
     profile.log = mode
     profiles[name] = profile
@@ -309,17 +188,11 @@ def get_language(name: str) -> str:
     return get_profile(name).lang
 
 
-def set_language(
-        name: str,
-        language: str,
-) -> str:
+def set_language(name: str, language: str, ) -> str:
     language = normalize_language(language)
 
     profiles = load_profiles()
-    profile = profiles.get(
-        name,
-        default_profile(),
-    )
+    profile = profiles.get(name, default_profile(), )
 
     profile.lang = language
     profiles[name] = profile

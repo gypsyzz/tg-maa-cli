@@ -182,15 +182,7 @@ TEXT = {
 def normalize_language(value: object) -> str:
     raw = str(value or "en").strip().lower()
 
-    aliases = {
-        "en": "en",
-        "english": "en",
-        "zh": "zh",
-        "zh-cn": "zh",
-        "cn": "zh",
-        "chinese": "zh",
-        "中文": "zh",
-    }
+    aliases = {"en": "en", "english": "en", "zh": "zh", "zh-cn": "zh", "cn": "zh", "chinese": "zh", "中文": "zh", }
 
     if raw not in aliases:
         raise ValueError("Supported languages: en, zh")
@@ -198,58 +190,32 @@ def normalize_language(value: object) -> str:
     return aliases[raw]
 
 
-def text_for(
-        language: str,
-        key: str,
-        **kwargs,
-) -> str:
+def text_for(language: str, key: str, **kwargs, ) -> str:
     language = normalize_language(language)
-    template = TEXT[language].get(
-        key,
-        TEXT["en"].get(key, key),
-    )
+    template = TEXT[language].get(key, TEXT["en"].get(key, key), )
     return template.format(**kwargs)
 
 
-def mode_text(
-        language: str,
-        mode: str,
-) -> str:
+def mode_text(language: str, mode: str, ) -> str:
     mode = mode.upper()
 
     if language == "zh":
-        return {
-            "OFF": "关闭",
-            "ON": "开启",
-            "FULL": "完整",
-        }.get(mode, mode)
+        return {"OFF": "关闭", "ON": "开启", "FULL": "完整", }.get(mode, mode)
 
     return mode
 
 
-def result_text(
-        language: str,
-        result: str,
-) -> str:
+def result_text(language: str, result: str, ) -> str:
     key = f"result_{result}"
-    return TEXT[normalize_language(language)].get(
-        key,
-        result,
-    )
+    return TEXT[normalize_language(language)].get(key, result, )
 
 
-def language_name(
-        language: str,
-) -> str:
+def language_name(language: str, ) -> str:
     language = normalize_language(language)
-    return TEXT[language][
-        f"language_{language}"
-    ]
+    return TEXT[language][f"language_{language}"]
 
 
-def bot_commands(
-        language: str,
-) -> list[BotCommand]:
+def bot_commands(language: str, ) -> list[BotCommand]:
     language = normalize_language(language)
 
     return [
