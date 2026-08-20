@@ -7,8 +7,9 @@ from telegram import BotCommandScopeChat, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from i18n import bot_commands, language_name, mode_text, normalize_language, text_for
-from maa_config import NAME_BY_CHAT_ID, service_unit_for
-from profile_store import get_log_mode, get_profile, normalize_times, set_language, set_log_mode, set_schedule
+from maa_config import service_unit_for
+from profile_store import (get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, set_language,
+                           set_log_mode, set_schedule, )
 from systemd_utils import run_cmd, sync_timer, unit_is_active
 from task_store import (add_fight_task, fight_sequence, load_task_json, long_task_sequence, parse_fight_add_args,
                         remove_fight_task, save_task_json, short_task_sequence, )
@@ -22,7 +23,12 @@ def name_for_update(update: Update, ) -> str | None:
     if chat is None:
         return None
 
-    return NAME_BY_CHAT_ID.get(chat.id)
+    match = get_profile_by_chat_id(chat.id)
+
+    if match is None:
+        return None
+
+    return match[0]
 
 
 def auth_required(func):

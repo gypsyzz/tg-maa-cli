@@ -5,8 +5,7 @@ TOKEN: "PUT_BOT_TOKEN_HERE"
 TIMEZONE: "Asia/Singapore"
 PERSISTENT: true
 
-# These paths are relative to this file unless absolute.
-AUTHORIZED_CHATS_FILE: "authorized_chats.yaml"
+# This path is relative to this file unless absolute.
 PROFILES_FILE: "profiles.yaml"
 
 # maa-cli task JSON directory used by /task and /fight.

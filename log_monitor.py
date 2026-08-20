@@ -10,8 +10,8 @@ from pathlib import Path
 from telegram.ext import Application
 
 from i18n import text_for
-from maa_config import AUTHORIZED_BY_NAME, service_unit_for
-from profile_store import get_profile
+from maa_config import service_unit_for
+from profile_store import get_profile, load_profiles
 from systemd_utils import systemctl_value
 from telegram_ui import send_profile_preformatted
 
@@ -539,6 +539,7 @@ async def refresh_profile_pids(
             int,
             str,
         ],
+        profile_names: tuple[str, ...],
 ) -> set[int]:
     """
     Map each profile's systemd MainPID to its
@@ -547,7 +548,7 @@ async def refresh_profile_pids(
 
     active_pids: set[int] = set()
 
-    for name in AUTHORIZED_BY_NAME:
+    for name in profile_names:
         unit = service_unit_for(name)
 
         try:
@@ -603,6 +604,7 @@ async def log_monitor_loop(
     # Maa process PID -> currently running
     # top-level TaskChain
     active_tasks: dict[int, ActiveTask,] = {}
+    profile_names = tuple(load_profiles())
 
     try:
         while True:
@@ -616,7 +618,8 @@ async def log_monitor_loop(
             # before the systemd service exits.
             active_pids = (
                 await refresh_profile_pids(
-                    pid_to_profile
+                    pid_to_profile,
+                    profile_names,
                 )
             )
 

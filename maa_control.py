@@ -10,14 +10,14 @@ from telegram.ext import Application, ApplicationBuilder
 from handlers import register_handlers
 from i18n import bot_commands
 from log_monitor import log_monitor_loop
-from maa_config import AUTHORIZED_BY_NAME, TOKEN
-from profile_store import ensure_profiles_file, get_profile
+from maa_config import TOKEN
+from profile_store import ensure_profiles_file, load_profiles
 from systemd_utils import sync_timer
 
 
 async def sync_all_timers() -> None:
-    for name in AUTHORIZED_BY_NAME:
-        await sync_timer(name, get_profile(name).schedule, )
+    for name, profile in load_profiles().items():
+        await sync_timer(name, profile.schedule, )
 
 
 async def set_command_menus(application: Application, ) -> None:
@@ -28,10 +28,11 @@ async def set_command_menus(application: Application, ) -> None:
     )
 
     # Each authorized profile/chat gets its own localized menu.
-    for name, chat_id in AUTHORIZED_BY_NAME.items():
-        lang = get_profile(name).lang
-
-        await application.bot.set_my_commands(bot_commands(lang), scope=BotCommandScopeChat(chat_id), )
+    for profile in load_profiles().values():
+        await application.bot.set_my_commands(
+            bot_commands(profile.lang),
+            scope=BotCommandScopeChat(profile.chat_id),
+        )
 
 
 async def post_init(application: Application, ) -> None:
@@ -68,8 +69,7 @@ async def cli_sync_profiles() -> None:
     ensure_profiles_file()
     await sync_all_timers()
 
-    for name in AUTHORIZED_BY_NAME:
-        profile = get_profile(name)
+    for name, profile in load_profiles().items():
         schedule = profile.schedule
 
         if not schedule.times:

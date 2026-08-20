@@ -8,7 +8,7 @@ from telegram.error import BadRequest
 from telegram.ext import Application
 
 from i18n import mode_text, result_text, text_for
-from maa_config import AUTHORIZED_BY_NAME, TIMEZONE, service_unit_for
+from maa_config import TIMEZONE, service_unit_for
 from profile_store import get_profile
 from systemd_utils import next_run, service_result, unit_is_active
 
@@ -204,11 +204,12 @@ async def send_preformatted(application: Application, *, chat_id: int, title: st
 
 
 async def send_profile_preformatted(application: Application, *, name: str, title: str, text: str, ) -> None:
-    chat_id = AUTHORIZED_BY_NAME.get(name)
+    profile = get_profile(name)
 
-    if chat_id is None:
-        return
-
-    lang = get_profile(name).lang
-
-    await send_preformatted(application, chat_id=chat_id, title=title, text=text, continued_word=text_for(lang, "continued", ), )
+    await send_preformatted(
+        application,
+        chat_id=profile.chat_id,
+        title=title,
+        text=text,
+        continued_word=text_for(profile.lang, "continued", ),
+    )

@@ -7,7 +7,6 @@ STATE_DIR="$HOME/.config/maa-tg-bot"
 MANAGED_FILE="$STATE_DIR/managed_profiles.txt"
 
 CONFIG="$ROOT/telegram_config.yaml"
-AUTH="$ROOT/authorized_chats.yaml"
 PROFILES="$ROOT/profiles.yaml"
 
 NEEDS_EDIT=0
@@ -28,10 +27,6 @@ create_if_missing \
     "$ROOT/telegram_config.yaml.example"
 
 create_if_missing \
-    "$AUTH" \
-    "$ROOT/authorized_chats.yaml.example"
-
-create_if_missing \
     "$PROFILES" \
     "$ROOT/profiles.yaml.example"
 
@@ -39,7 +34,6 @@ if [[ "$NEEDS_EDIT" -eq 1 ]]; then
     echo
     echo "Edit the newly created configuration files, then rerun:"
     echo "  $CONFIG"
-    echo "  $AUTH"
     echo "  $PROFILES"
     exit 1
 fi
@@ -65,7 +59,7 @@ fi
 
 "$PYTHON_BIN" -m pip install -r "$ROOT/requirements.txt"
 
-# Validate configuration and get authorized profile names + optional MAA path.
+# Validate configuration and get configured profile names + optional MAA path.
 mapfile -t INFO < <(
     PYTHONPATH="$ROOT" \
     MAA_BOT_CONFIG="$CONFIG" \
@@ -83,11 +77,10 @@ token = str(cfg.get("TOKEN", "")).strip()
 if not token or token == "PUT_BOT_TOKEN_HERE":
     raise SystemExit("Set TOKEN in telegram_config.yaml first.")
 
-from maa_config import AUTHORIZED_BY_NAME
 from profile_store import ensure_profiles_file, load_profiles
 
 ensure_profiles_file()
-load_profiles()
+profiles = load_profiles()
 
 maa = str(cfg.get("MAA_EXECUTABLE", "")).strip()
 if not maa:
@@ -101,13 +94,13 @@ if not maa:
 
 print(maa)
 
-for name in AUTHORIZED_BY_NAME:
+for name in profiles:
     print(name)
 PY
 )
 
 if [[ "${#INFO[@]}" -lt 2 ]]; then
-    echo "No authorized Telegram chats were found in $AUTH"
+    echo "No configured Telegram profiles were found in $PROFILES"
     exit 1
 fi
 
@@ -169,7 +162,7 @@ PY
 systemctl --user stop maa-telegram-bot.service 2>/dev/null || true
 
 # Remove worker units previously managed by this project when the
-# corresponding authorization/profile name was removed.
+# corresponding configured profile name was removed.
 if [[ -f "$MANAGED_FILE" ]]; then
     while IFS= read -r old_name; do
         [[ -z "$old_name" ]] && continue

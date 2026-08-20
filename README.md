@@ -20,12 +20,12 @@
 maa_control.py       应用启动和生命周期管理
 handlers.py          Telegram 命令和按钮回调处理
 telegram_ui.py       状态文本、按钮、Telegram 格式化
-profile_store.py     profiles.yaml 读写
+profile_store.py     profiles.yaml 读写和聊天授权
 i18n.py              英文 / 中文界面翻译
 systemd_utils.py     用户级 Service / Timer / Journal 辅助功能
 task_store.py        任务 JSON 和 Fight 编辑
 log_monitor.py       基于 MaaCore TaskChain 回调的实时日志监控
-maa_config.py        路径、配置、授权
+maa_config.py        路径和全局配置
 
 install.sh           初次安装 / 更新 systemd 配置
 uninstall.sh         删除本项目管理的 systemd 单元
@@ -48,23 +48,19 @@ tools/
 
 ```bash
 cp telegram_config.yaml.example telegram_config.yaml
-cp authorized_chats.yaml.example authorized_chats.yaml
 cp profiles.yaml.example profiles.yaml
 ```
 
-在 `telegram_config.yaml` 中填写 Telegram Bot Token。
+在 `telegram_config.yaml` 中填写 Telegram Bot Token。然后在 `profiles.yaml`
+中为每个 Profile 填写真实的 Telegram `chat_id`。`chat_id` 必须是非零整数：
+私聊通常使用正数，群组或超级群组可以使用负数。空值、布尔值、字符串以及重复
+的 `chat_id` 都会导致配置验证失败。
 
-配置静态聊天授权：
-
-```yaml
-profile_a: 123456789
-profile_b: 987654321
-```
-
-运行时 Profile 状态保存在 `profiles.yaml`：
+配置静态聊天授权和运行时 Profile 状态保存在 `profiles.yaml`：
 
 ```yaml
 profile_a:
+  chat_id:
   schedule:
     enabled: false
     times:
@@ -76,6 +72,7 @@ profile_a:
   lang: "en"
 
 profile_b:
+  chat_id:
   schedule:
     enabled: false
     times:
@@ -88,6 +85,24 @@ profile_b:
 手动编写 YAML 时，建议给 `ON` / `OFF` 加上引号，以避免被 YAML 解析为布尔值。
 
 代码同时兼容 PyYAML 将未加引号的 `ON` / `OFF` 解析为布尔值的情况。
+
+### 从旧版本迁移
+
+旧版本使用 `authorized_chats.yaml` 保存 `Profile 名称 -> chat_id`。升级后，请将每个
+非空的 `chat_id` 手动复制到 `profiles.yaml` 中名称相同的 Profile 下：
+
+```yaml
+profile_a:
+  chat_id: # 在这里填写 authorized_chats.yaml 中 profile_a 的真实整数值
+  schedule:
+    enabled: false
+    times: []
+  log: "OFF"
+  lang: "en"
+```
+
+每个 Profile 名称（忽略大小写后）和每个 `chat_id` 都必须唯一。完成迁移并确认安装
+成功后，旧的 `authorized_chats.yaml` 不再被程序读取，可以自行归档或删除。
 
 
 ## 2. MAA Profile / Task
@@ -260,7 +275,6 @@ maa-update.timer
 以下内容会被保留：
 
 - `telegram_config.yaml`
-- `authorized_chats.yaml`
 - `profiles.yaml`
 - `~/.config/maa/`
 - maa-cli Task

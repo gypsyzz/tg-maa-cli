@@ -88,7 +88,6 @@ echo "Removed MAA Telegram bot systemd units."
 echo
 echo "Preserved:"
 echo "  telegram_config.yaml"
-echo "  authorized_chats.yaml"
 echo "  profiles.yaml"
 echo "  ~/.config/maa/"
 echo "  project files / virtual environment"
