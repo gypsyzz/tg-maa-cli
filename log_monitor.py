@@ -24,7 +24,6 @@ from telegram_ui import (
     send_profile_preformatted,
 )
 
-
 # ---------------------------------------------------------------------------
 # MaaCore log parsing
 # ---------------------------------------------------------------------------
@@ -60,7 +59,6 @@ EVENT_STATUS = {
     "TaskChainStopped": "Stopped",
 }
 
-
 # Lines worth retaining when diagnosing a failed task.
 #
 # Important:
@@ -78,7 +76,6 @@ FAILURE_LINE_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-
 
 # Remove the verbose MaaCore prefix:
 #
@@ -122,7 +119,7 @@ class ActiveTask:
 # ---------------------------------------------------------------------------
 
 def strip_ansi(
-    text: str,
+        text: str,
 ) -> str:
     return ANSI_RE.sub(
         "",
@@ -131,7 +128,7 @@ def strip_ansi(
 
 
 def normalize_log_mode(
-    value,
+        value,
 ) -> str:
     # YAML may interpret unquoted ON/OFF
     # as bool values.
@@ -176,10 +173,10 @@ async def resolve_asst_log_path() -> Path:
 
     if not maa_bin:
         candidate = (
-            Path.home()
-            / ".local"
-            / "bin"
-            / "maa"
+                Path.home()
+                / ".local"
+                / "bin"
+                / "maa"
         )
 
         if candidate.is_file():
@@ -202,8 +199,8 @@ async def resolve_asst_log_path() -> Path:
             )
 
             if (
-                process.returncode == 0
-                and stdout
+                    process.returncode == 0
+                    and stdout
             ):
                 log_dir = Path(
                     stdout.decode(
@@ -213,8 +210,8 @@ async def resolve_asst_log_path() -> Path:
                 )
 
                 return (
-                    log_dir
-                    / "asst.log"
+                        log_dir
+                        / "asst.log"
                 )
 
         except Exception:
@@ -222,17 +219,17 @@ async def resolve_asst_log_path() -> Path:
 
     # Normal maa-cli Linux fallback.
     return (
-        Path.home()
-        / ".local"
-        / "state"
-        / "maa"
-        / "debug"
-        / "asst.log"
+            Path.home()
+            / ".local"
+            / "state"
+            / "maa"
+            / "debug"
+            / "asst.log"
     )
 
 
 def initial_cursor(
-    path: Path,
+        path: Path,
 ) -> LogCursor:
     """
     Begin at EOF so restarting the Telegram bot
@@ -251,8 +248,8 @@ def initial_cursor(
 
 
 def read_new_log_lines(
-    path: Path,
-    cursor: LogCursor,
+        path: Path,
+        cursor: LogCursor,
 ) -> list[str]:
     """
     Incrementally read newly appended data from
@@ -266,8 +263,8 @@ def read_new_log_lines(
 
     # Log file was replaced, rotated, or truncated.
     if (
-        cursor.inode != stat.st_ino
-        or stat.st_size < cursor.offset
+            cursor.inode != stat.st_ino
+            or stat.st_size < cursor.offset
     ):
         cursor.inode = stat.st_ino
         cursor.offset = 0
@@ -275,7 +272,7 @@ def read_new_log_lines(
 
     try:
         with path.open(
-            "rb"
+                "rb"
         ) as file:
             file.seek(
                 cursor.offset
@@ -294,8 +291,8 @@ def read_new_log_lines(
         return []
 
     data = (
-        cursor.partial
-        + data
+            cursor.partial
+            + data
     )
 
     parts = data.split(
@@ -322,7 +319,7 @@ def read_new_log_lines(
 # ---------------------------------------------------------------------------
 
 def parse_pid(
-    line: str,
+        line: str,
 ) -> int | None:
     """
     Extract:
@@ -347,12 +344,12 @@ def parse_pid(
 
 
 def parse_taskchain_callback(
-    line: str,
+        line: str,
 ) -> tuple[
-    str,
-    str,
-    int,
-] | None:
+         str,
+         str,
+         int,
+     ] | None:
     """
     Parse top-level MaaCore task callbacks:
 
@@ -381,8 +378,8 @@ def parse_taskchain_callback(
             )
         )
     except (
-        json.JSONDecodeError,
-        TypeError,
+            json.JSONDecodeError,
+            TypeError,
     ):
         return None
 
@@ -400,8 +397,8 @@ def parse_taskchain_callback(
             )
         )
     except (
-        TypeError,
-        ValueError,
+            TypeError,
+            ValueError,
     ):
         return None
 
@@ -422,7 +419,7 @@ def parse_taskchain_callback(
 # ---------------------------------------------------------------------------
 
 def extract_failure_line(
-    line: str,
+        line: str,
 ) -> str | None:
     """
     Return a compact failure-related line.
@@ -435,7 +432,7 @@ def extract_failure_line(
     ).strip()
 
     if not FAILURE_LINE_RE.search(
-        line
+            line
     ):
         return None
 
@@ -464,7 +461,7 @@ def extract_failure_line(
 
 
 def failure_details(
-    task: ActiveTask,
+        task: ActiveTask,
 ) -> str:
     """
     Return only actual failure/error-related
@@ -484,8 +481,8 @@ def failure_details(
 # ---------------------------------------------------------------------------
 
 def task_result_text(
-    task: ActiveTask,
-    event: str,
+        task: ActiveTask,
+        event: str,
 ) -> str:
     status = EVENT_STATUS.get(
         event,
@@ -504,10 +501,10 @@ def task_result_text(
 # ---------------------------------------------------------------------------
 
 async def report_finished_task(
-    application: Application,
-    name: str,
-    task: ActiveTask,
-    event: str,
+        application: Application,
+        name: str,
+        task: ActiveTask,
+        event: str,
 ) -> None:
     """
     Called immediately when MaaCore emits a
@@ -617,16 +614,16 @@ async def report_finished_task(
 # ---------------------------------------------------------------------------
 
 async def process_log_line(
-    application: Application,
-    line: str,
-    pid_to_profile: dict[
-        int,
-        str,
-    ],
-    active_tasks: dict[
-        int,
-        ActiveTask,
-    ],
+        application: Application,
+        line: str,
+        pid_to_profile: dict[
+            int,
+            str,
+        ],
+        active_tasks: dict[
+            int,
+            ActiveTask,
+        ],
 ) -> None:
     line = strip_ansi(
         line
@@ -667,8 +664,8 @@ async def process_log_line(
     )
 
     if (
-        current is not None
-        and failure_line is not None
+            current is not None
+            and failure_line is not None
     ):
         current.failure_lines.append(
             failure_line
@@ -722,9 +719,9 @@ async def process_log_line(
     # Bot may have restarted while MAA was
     # already executing the task.
     if (
-        task is None
-        or task.taskid != taskid
-        or task.taskchain != taskchain
+            task is None
+            or task.taskid != taskid
+            or task.taskchain != taskchain
     ):
         task = ActiveTask(
             taskchain=taskchain,
@@ -758,10 +755,10 @@ async def process_log_line(
 # ---------------------------------------------------------------------------
 
 async def refresh_profile_pids(
-    pid_to_profile: dict[
-        int,
-        str,
-    ],
+        pid_to_profile: dict[
+            int,
+            str,
+        ],
 ) -> set[int]:
     """
     Map each profile's systemd MainPID to its
@@ -786,9 +783,9 @@ async def refresh_profile_pids(
             )
 
         except (
-            Exception,
-            TypeError,
-            ValueError,
+                Exception,
+                TypeError,
+                ValueError,
         ):
             continue
 
@@ -807,15 +804,15 @@ async def refresh_profile_pids(
 
 
 def prune_stale_pids(
-    pid_to_profile: dict[
-        int,
-        str,
-    ],
-    active_tasks: dict[
-        int,
-        ActiveTask,
-    ],
-    active_pids: set[int],
+        pid_to_profile: dict[
+            int,
+            str,
+        ],
+        active_tasks: dict[
+            int,
+            ActiveTask,
+        ],
+        active_pids: set[int],
 ) -> None:
     """
     Remove mappings for worker processes that
@@ -826,7 +823,7 @@ def prune_stale_pids(
     """
 
     for pid in list(
-        pid_to_profile
+            pid_to_profile
     ):
         if pid in active_pids:
             continue
@@ -847,7 +844,7 @@ def prune_stale_pids(
 # ---------------------------------------------------------------------------
 
 async def log_monitor_loop(
-    application: Application,
+        application: Application,
 ) -> None:
     log_path = (
         await resolve_asst_log_path()

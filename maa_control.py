@@ -43,7 +43,7 @@ async def sync_all_timers() -> None:
 
 
 async def set_command_menus(
-    application: Application,
+        application: Application,
 ) -> None:
     # English fallback for any client that does not match a
     # per-chat scope.
@@ -64,7 +64,7 @@ async def set_command_menus(
 
 
 async def post_init(
-    application: Application,
+        application: Application,
 ) -> None:
     ensure_profiles_file()
     await sync_all_timers()
@@ -82,7 +82,7 @@ async def post_init(
 
 
 async def post_stop(
-    application: Application,
+        application: Application,
 ) -> None:
     task = application.bot_data.get(
         "log_monitor_task"
@@ -127,17 +127,17 @@ async def cli_sync_profiles() -> None:
             schedule_text = "no schedule"
         elif schedule.enabled:
             schedule_text = (
-                "schedule ON: "
-                + ", ".join(
-                    schedule.times
-                )
+                    "schedule ON: "
+                    + ", ".join(
+                schedule.times
+            )
             )
         else:
             schedule_text = (
-                "schedule OFF: "
-                + ", ".join(
-                    schedule.times
-                )
+                    "schedule OFF: "
+                    + ", ".join(
+                schedule.times
+            )
             )
 
         print(

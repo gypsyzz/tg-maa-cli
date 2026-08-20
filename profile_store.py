@@ -33,7 +33,7 @@ class ProfileState:
 
 
 def normalize_times(
-    values: Iterable[object],
+        values: Iterable[object],
 ) -> list[str]:
     times: list[str] = []
 
@@ -69,8 +69,8 @@ def default_profile() -> ProfileState:
 
 
 def parse_profile(
-    name: str,
-    raw: object,
+        name: str,
+        raw: object,
 ) -> ProfileState:
     if raw is None:
         return default_profile()
@@ -90,8 +90,8 @@ def parse_profile(
 
     elif isinstance(raw_schedule, dict):
         if (
-            "enable" in raw_schedule
-            and "enabled" not in raw_schedule
+                "enable" in raw_schedule
+                and "enabled" not in raw_schedule
         ):
             raise ValueError(
                 f"{PROFILES_PATH}: {name}.schedule uses 'enable'; "
@@ -183,7 +183,7 @@ def load_profiles() -> dict[str, ProfileState]:
 
 
 def save_profiles(
-    profiles: dict[str, ProfileState],
+        profiles: dict[str, ProfileState],
 ) -> None:
     data: dict[str, dict] = {}
 
@@ -242,10 +242,10 @@ def get_profile(name: str) -> ProfileState:
 
 
 def set_schedule(
-    name: str,
-    *,
-    times: Iterable[object] | None = None,
-    enabled: bool | None = None,
+        name: str,
+        *,
+        times: Iterable[object] | None = None,
+        enabled: bool | None = None,
 ) -> ScheduleState:
     profiles = load_profiles()
     profile = profiles.get(
@@ -282,8 +282,8 @@ def get_log_mode(name: str) -> str:
 
 
 def set_log_mode(
-    name: str,
-    mode: str,
+        name: str,
+        mode: str,
 ) -> str:
     mode = mode.upper()
 
@@ -310,8 +310,8 @@ def get_language(name: str) -> str:
 
 
 def set_language(
-    name: str,
-    language: str,
+        name: str,
+        language: str,
 ) -> str:
     language = normalize_language(language)
 

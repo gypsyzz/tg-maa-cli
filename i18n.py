@@ -199,9 +199,9 @@ def normalize_language(value: object) -> str:
 
 
 def text_for(
-    language: str,
-    key: str,
-    **kwargs,
+        language: str,
+        key: str,
+        **kwargs,
 ) -> str:
     language = normalize_language(language)
     template = TEXT[language].get(
@@ -212,8 +212,8 @@ def text_for(
 
 
 def mode_text(
-    language: str,
-    mode: str,
+        language: str,
+        mode: str,
 ) -> str:
     mode = mode.upper()
 
@@ -228,8 +228,8 @@ def mode_text(
 
 
 def result_text(
-    language: str,
-    result: str,
+        language: str,
+        result: str,
 ) -> str:
     key = f"result_{result}"
     return TEXT[normalize_language(language)].get(
@@ -239,7 +239,7 @@ def result_text(
 
 
 def language_name(
-    language: str,
+        language: str,
 ) -> str:
     language = normalize_language(language)
     return TEXT[language][
@@ -248,7 +248,7 @@ def language_name(
 
 
 def bot_commands(
-    language: str,
+        language: str,
 ) -> list[BotCommand]:
     language = normalize_language(language)
 

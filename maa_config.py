@@ -86,7 +86,7 @@ def timer_file_for(name: str) -> Path:
 
 
 def load_authorized_chats(
-    path: Path = AUTHORIZED_CHATS_PATH,
+        path: Path = AUTHORIZED_CHATS_PATH,
 ) -> tuple[dict[str, int], dict[int, str]]:
     with path.open(encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}

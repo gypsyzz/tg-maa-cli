@@ -134,7 +134,6 @@ async def safe_edit_message(
 
 
 async def control_keyboard(name: str, ) -> InlineKeyboardMarkup:
-
     running = await unit_is_active(
         service_unit_for(name)
     )

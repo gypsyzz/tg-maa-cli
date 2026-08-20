@@ -26,8 +26,8 @@ class CmdResult:
 
 
 async def run_cmd(
-    *args: str,
-    timeout: float = 20,
+        *args: str,
+        timeout: float = 20,
 ) -> CmdResult:
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -70,8 +70,8 @@ async def run_cmd(
 
 
 async def systemctl_value(
-    unit: str,
-    prop: str,
+        unit: str,
+        prop: str,
 ) -> str:
     result = await run_cmd(
         "systemctl",
@@ -89,7 +89,7 @@ async def systemctl_value(
 
 
 async def unit_is_active(
-    unit: str,
+        unit: str,
 ) -> bool:
     result = await run_cmd(
         "systemctl",
@@ -103,24 +103,24 @@ async def unit_is_active(
 
 
 async def service_result(
-    name: str,
+        name: str,
 ) -> str:
     return (
-        await systemctl_value(
-            service_unit_for(name),
-            "Result",
-        )
-        or "n/a"
+            await systemctl_value(
+                service_unit_for(name),
+                "Result",
+            )
+            or "n/a"
     )
 
 
 async def next_run(
-    name: str,
-    schedule: ScheduleState | None = None,
+        name: str,
+        schedule: ScheduleState | None = None,
 ) -> str:
     schedule = (
-        schedule
-        or get_profile(name).schedule
+            schedule
+            or get_profile(name).schedule
     )
 
     if not schedule.times:
@@ -141,8 +141,8 @@ async def next_run(
 
 
 def render_timer(
-    name: str,
-    times: Iterable[str],
+        name: str,
+        times: Iterable[str],
 ) -> str:
     lines = [
         "[Unit]",
@@ -185,7 +185,7 @@ async def daemon_reload() -> None:
 
 
 async def disable_timer(
-    name: str,
+        name: str,
 ) -> None:
     timer_unit = timer_unit_for(name)
     timer_file = timer_file_for(name)
@@ -205,8 +205,8 @@ async def disable_timer(
 
 
 async def sync_timer(
-    name: str,
-    schedule: ScheduleState,
+        name: str,
+        schedule: ScheduleState,
 ) -> None:
     SYSTEMD_USER_DIR.mkdir(
         parents=True,
@@ -265,7 +265,7 @@ async def sync_timer(
 
 
 async def invocation_log(
-    invocation_id: str,
+        invocation_id: str,
 ) -> str:
     result = await run_cmd(
         "journalctl",
