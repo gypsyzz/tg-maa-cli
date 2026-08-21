@@ -4,9 +4,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from telegram import BotCommandScopeChat
+from telegram import Bot, BotCommandScopeChat
 from telegram.ext import Application, ApplicationBuilder
 
+from alert_checker import check_all_alerts
 from handlers import register_handlers
 from i18n import bot_commands
 from log_monitor import log_monitor_loop
@@ -79,19 +80,33 @@ async def cli_sync_profiles() -> None:
         else:
             schedule_text = ("schedule OFF: " + ", ".join(schedule.times))
 
-        print(f"{name}: {schedule_text}; " f"log={profile.log}; " f"lang={profile.lang}")
+        alert_text = (("ON" if profile.alert.enabled else "OFF") + f"/{profile.alert.hours}h")
+
+        print(f"{name}: {schedule_text}; " f"alert={alert_text}; " f"log={profile.log}; " f"lang={profile.lang}")
+
+
+async def cli_check_alerts() -> None:
+    async with Bot(TOKEN) as bot:
+        await check_all_alerts(bot)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=("Telegram controller for " "per-chat MAA profiles"))
 
-    parser.add_argument("--sync-profiles", action="store_true",
-                        help=("sync profiles.yaml schedules " "into user systemd timers and exit"), )
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--sync-profiles", action="store_true",
+                         help=("sync profiles.yaml schedules " "into user systemd timers and exit"), )
+    actions.add_argument("--check-alerts", action="store_true",
+                         help="check enabled inactivity alerts once and exit", )
 
     args = parser.parse_args()
 
     if args.sync_profiles:
         asyncio.run(cli_sync_profiles())
+        return
+
+    if args.check_alerts:
+        asyncio.run(cli_check_alerts())
         return
 
     build_application().run_polling(drop_pending_updates=False)

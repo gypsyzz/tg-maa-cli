@@ -55,6 +55,15 @@ TEXT = {
         "log_desc_on": "send only explicitly non-Completed MAA subtask summaries",
         "log_desc_full": "send log after each MAA subtask finishes",
 
+        "alert_status": "🔔 {name} game reminder\nState: {state}\nTime: {duration}",
+        "alert_enabled": "🔔 {name} game reminder enabled after {duration}.",
+        "alert_disabled": "🔕 {name} game reminder disabled.",
+        "alert_time_set": "✅ {name} game reminder time set to {duration}.",
+        "alert_invalid_time": "❌ Time must be a positive whole number of hours, e.g. /alert time 24.",
+        "alert_due": "You are due to run the game.",
+        "hour_one": "hour",
+        "hour_many": "hours",
+
         "start_failed": "❌ Start failed:\n{error}",
         "stop_failed": "❌ Stop failed:\n{error}",
 
@@ -85,6 +94,7 @@ TEXT = {
         "cmd_task": "Show task sequence",
         "cmd_fight": "View or edit Fight stages",
         "cmd_log": "Set automatic log mode",
+        "cmd_alert": "Set game inactivity reminder",
         "cmd_lang": "Change UI language",
         "cmd_run": "Run MAA now",
         "cmd_stop": "Stop current MAA run",
@@ -141,6 +151,15 @@ TEXT = {
         "log_desc_on": "仅当 MAA 明确报告子任务状态不是 Completed 时发送",
         "log_desc_full": "每个 MAA 子任务结束后发送运行结果",
 
+        "alert_status": "🔔 {name} 游戏提醒\n状态: {state}\n时限: {duration}",
+        "alert_enabled": "🔔 {name} 游戏提醒已开启，时限为 {duration}。",
+        "alert_disabled": "🔕 {name} 游戏提醒已关闭。",
+        "alert_time_set": "✅ {name} 游戏提醒时限已设为 {duration}。",
+        "alert_invalid_time": "❌ 时限必须是正整数小时，例如 /alert time 24。",
+        "alert_due": "你该运行游戏了。",
+        "hour_one": "小时",
+        "hour_many": "小时",
+
         "start_failed": "❌ 启动失败:\n{error}",
         "stop_failed": "❌ 停止失败:\n{error}",
 
@@ -171,6 +190,7 @@ TEXT = {
         "cmd_task": "查看任务序列",
         "cmd_fight": "查看或修改作战关卡",
         "cmd_log": "设置自动日志模式",
+        "cmd_alert": "设置游戏未运行提醒",
         "cmd_lang": "切换界面语言",
         "cmd_run": "立即运行 MAA",
         "cmd_stop": "停止当前 MAA 运行",
@@ -205,6 +225,11 @@ def mode_text(language: str, mode: str, ) -> str:
     return mode
 
 
+def hours_text(language: str, hours: int, ) -> str:
+    key = ("hour_one" if hours == 1 else "hour_many")
+    return f"{hours} {text_for(language, key)}"
+
+
 def result_text(language: str, result: str, ) -> str:
     key = f"result_{result}"
     return TEXT[normalize_language(language)].get(key, result, )
@@ -225,6 +250,7 @@ def bot_commands(language: str, ) -> list[BotCommand]:
         BotCommand("task", text_for(language, "cmd_task")),
         BotCommand("fight", text_for(language, "cmd_fight")),
         BotCommand("log", text_for(language, "cmd_log")),
+        BotCommand("alert", text_for(language, "cmd_alert")),
         BotCommand("lang", text_for(language, "cmd_lang")),
         BotCommand("run", text_for(language, "cmd_run")),
         BotCommand("stop", text_for(language, "cmd_stop")),

@@ -7,6 +7,9 @@ profile_a:
       - "06:33"
       - "14:33"
       - "17:33"
+  alert:
+    enabled: false
+    hours: 24
   log: "OFF"
   lang: "en"
 
@@ -17,5 +20,8 @@ profile_b:
     times:
       - "02:00"
       - "16:10"
+  alert:
+    enabled: false
+    hours: 24
   log: "OFF"
   lang: "zh"

@@ -4,5 +4,9 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=__MAA_BIN__ self update
-ExecStart=__MAA_BIN__ update
+WorkingDirectory="@WORKDIR@"
+Environment="MAA_BOT_CONFIG=@CONFIG@"
+Environment="PATH=@PATH@"
+ExecStart=-@MAA_BIN@ self update
+ExecStart=-@MAA_BIN@ update
+ExecStart=-@PYTHON@ @WORKDIR@/maa_control.py --check-alerts

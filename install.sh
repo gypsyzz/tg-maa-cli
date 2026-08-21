@@ -158,6 +158,32 @@ Path(output).write_text(text, encoding="utf-8")
 PY
 }
 
+render_update_unit() {
+    "$PYTHON_BIN" - \
+        "$ROOT/systemd/maa-update.service.template" \
+        "$SYSTEMD_USER_DIR/maa-update.service" \
+        "$MAA_BIN" \
+        "$PYTHON_BIN" \
+        "$ROOT" \
+        "$CONFIG" \
+        "$PATH" <<'PY'
+import sys
+from pathlib import Path
+
+template, output, maa_bin, python, root, config, path = sys.argv[1:]
+text = Path(template).read_text(encoding="utf-8")
+text = (
+    text
+    .replace("@MAA_BIN@", maa_bin)
+    .replace("@PYTHON@", python)
+    .replace("@WORKDIR@", root)
+    .replace("@CONFIG@", config)
+    .replace("@PATH@", path)
+)
+Path(output).write_text(text, encoding="utf-8")
+PY
+}
+
 # Stop the bot while replacing units/code environment.
 systemctl --user stop maa-telegram-bot.service 2>/dev/null || true
 
@@ -221,10 +247,7 @@ fi
 
 echo "Installing global MAA updater..."
 
-sed \
-    -e "s|__MAA_BIN__|$MAA_BIN|g" \
-    "$UPDATE_SERVICE_TEMPLATE" \
-    > "$UPDATE_SERVICE"
+render_update_unit
 
 cp \
     "$UPDATE_TIMER_TEMPLATE" \
@@ -234,6 +257,7 @@ systemctl --user daemon-reload
 
 # Syntax/import validation before daemon startup.
 "$PYTHON_BIN" -m py_compile \
+    "$ROOT/alert_checker.py" \
     "$ROOT/maa_control.py" \
     "$ROOT/handlers.py" \
     "$ROOT/log_monitor.py" \

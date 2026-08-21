@@ -10,7 +10,9 @@ from i18n import normalize_language
 from maa_config import PROFILES_PATH, slug_for, validate_name
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+ALERT_HOURS_RE = re.compile(r"^[1-9]\d*$")
 LOG_MODES = {"OFF", "ON", "FULL"}
+DEFAULT_ALERT_HOURS = 24
 
 
 @dataclass
@@ -20,9 +22,16 @@ class ScheduleState:
 
 
 @dataclass
+class AlertState:
+    enabled: bool
+    hours: int
+
+
+@dataclass
 class ProfileState:
     chat_id: int
     schedule: ScheduleState
+    alert: AlertState
     log: str
     lang: str
 
@@ -50,6 +59,22 @@ def normalize_chat_id(value: object, *, name: str) -> int:
         raise ValueError(f"{PROFILES_PATH}: {name}.chat_id cannot be 0.")
 
     return value
+
+
+def validate_alert_hours(value: object) -> int:
+    if type(value) is not int or value <= 0:
+        raise ValueError("Alert time must be a positive whole number of hours.")
+
+    return value
+
+
+def parse_alert_hours(value: object) -> int:
+    raw = str(value).strip()
+
+    if not ALERT_HOURS_RE.fullmatch(raw):
+        raise ValueError("Alert time must be a positive whole number of hours.")
+
+    return validate_alert_hours(int(raw))
 
 
 def ensure_unique_slugs(names: Iterable[object]) -> None:
@@ -99,6 +124,25 @@ def parse_profile(name: str, raw: object) -> ProfileState:
     else:
         raise ValueError(f"{PROFILES_PATH}: {name}.schedule must be a mapping.")
 
+    raw_alert = raw.get("alert")
+
+    if raw_alert is None:
+        alert = AlertState(enabled=False, hours=DEFAULT_ALERT_HOURS, )
+
+    elif isinstance(raw_alert, dict):
+        raw_enabled = raw_alert.get("enabled", False)
+
+        if type(raw_enabled) is not bool:
+            raise ValueError(f"{PROFILES_PATH}: {name}.alert.enabled must be true or false.")
+
+        alert = AlertState(
+            enabled=raw_enabled,
+            hours=validate_alert_hours(raw_alert.get("hours", DEFAULT_ALERT_HOURS)),
+        )
+
+    else:
+        raise ValueError(f"{PROFILES_PATH}: {name}.alert must be a mapping.")
+
     raw_log = raw.get("log", "OFF")
 
     # PyYAML YAML 1.1 may parse unquoted ON/OFF as booleans.
@@ -115,6 +159,7 @@ def parse_profile(name: str, raw: object) -> ProfileState:
     return ProfileState(
         chat_id=chat_id,
         schedule=schedule,
+        alert=alert,
         log=log_mode,
         lang=language,
     )
@@ -181,6 +226,10 @@ def save_profiles(profiles: dict[str, ProfileState]) -> None:
                 "enabled": bool(profile.schedule.enabled) if times else False,
                 "times": times,
             },
+            "alert": {
+                "enabled": bool(profile.alert.enabled),
+                "hours": validate_alert_hours(profile.alert.hours),
+            },
             "log": profile.log.upper(),
             "lang": normalize_language(profile.lang),
         }
@@ -241,6 +290,33 @@ def set_schedule(
     save_profiles(profiles)
 
     return profile.schedule
+
+
+def set_alert_enabled(name: str, enabled: bool) -> AlertState:
+    name = validate_name(name)
+    profiles = load_profiles()
+
+    if name not in profiles:
+        raise ValueError(f"Unknown profile: {name}")
+
+    profiles[name].alert.enabled = bool(enabled)
+    save_profiles(profiles)
+
+    return profiles[name].alert
+
+
+def set_alert_hours(name: str, hours: int) -> AlertState:
+    name = validate_name(name)
+    hours = validate_alert_hours(hours)
+    profiles = load_profiles()
+
+    if name not in profiles:
+        raise ValueError(f"Unknown profile: {name}")
+
+    profiles[name].alert.hours = hours
+    save_profiles(profiles)
+
+    return profiles[name].alert
 
 
 def get_log_mode(name: str) -> str:

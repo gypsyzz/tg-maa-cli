@@ -1,8 +1,8 @@
 [Unit]
-Description=Check for MAA updates four times daily
+Description=Check for MAA updates hourly
 
 [Timer]
-OnCalendar=*-*-* 00,06,12,18:00:00
+OnCalendar=hourly
 Persistent=true
 Unit=maa-update.service
 

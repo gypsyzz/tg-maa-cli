@@ -32,6 +32,7 @@ def config_relative_path(key: str, default: str) -> Path:
 
 PROFILES_PATH = config_relative_path("PROFILES_FILE", "profiles.yaml")
 MAA_TASKS_DIR = config_relative_path("MAA_TASKS_DIR", "~/.config/maa/tasks")
+ALERT_STATE_PATH = Path.home() / ".config" / "maa-tg-bot" / "alert_state.yaml"
 
 
 def validate_name(name: object) -> str:

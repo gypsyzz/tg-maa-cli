@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Iterable
+from zoneinfo import ZoneInfo
 
 from maa_config import PERSISTENT, SYSTEMD_USER_DIR, TIMEZONE, service_unit_for, timer_file_for, timer_unit_for
 from profile_store import ScheduleState, get_profile
+
+SYSTEMD_TIMESTAMP_RE = re.compile(
+    r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\s+(?P<zone>[+-]\d{2}(?::?\d{2})?|UTC))?"
+)
 
 
 @dataclass
@@ -13,6 +20,12 @@ class CmdResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+@dataclass(frozen=True)
+class ServiceAction:
+    key: str
+    timestamp: datetime
 
 
 async def run_cmd(*args: str, timeout: float = 20, ) -> CmdResult:
@@ -52,6 +65,43 @@ async def unit_is_active(unit: str, ) -> bool:
 
 async def service_result(name: str, ) -> str:
     return (await systemctl_value(service_unit_for(name), "Result", ) or "n/a")
+
+
+def parse_systemd_timestamp(value: str, ) -> datetime | None:
+    match = SYSTEMD_TIMESTAMP_RE.search(value)
+
+    if match is None:
+        return None
+
+    try:
+        timestamp = datetime.strptime(match.group("timestamp"), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+    raw_zone = match.group("zone")
+
+    if raw_zone == "UTC":
+        source_zone = timezone.utc
+    elif raw_zone:
+        sign = (1 if raw_zone[0] == "+" else -1)
+        digits = raw_zone[1:].replace(":", "")
+        hours = int(digits[:2])
+        minutes = (int(digits[2:]) if len(digits) > 2 else 0)
+        source_zone = timezone(sign * timedelta(hours=hours, minutes=minutes))
+    else:
+        source_zone = ZoneInfo(TIMEZONE)
+
+    return timestamp.replace(tzinfo=source_zone).astimezone(timezone.utc)
+
+
+async def service_last_action(name: str, ) -> ServiceAction | None:
+    value = await systemctl_value(service_unit_for(name), "ExecMainExitTimestamp", )
+    timestamp = parse_systemd_timestamp(value)
+
+    if timestamp is None:
+        return None
+
+    return ServiceAction(key=timestamp.isoformat(), timestamp=timestamp, )
 
 
 async def next_run(name: str, schedule: ScheduleState | None = None, ) -> str:

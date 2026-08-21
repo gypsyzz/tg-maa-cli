@@ -6,10 +6,10 @@ from functools import wraps
 from telegram import BotCommandScopeChat, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
-from i18n import bot_commands, language_name, mode_text, normalize_language, text_for
+from i18n import bot_commands, hours_text, language_name, mode_text, normalize_language, text_for
 from maa_config import service_unit_for
-from profile_store import (get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, set_language,
-                           set_log_mode, set_schedule, )
+from profile_store import (get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, parse_alert_hours,
+                           set_alert_enabled, set_alert_hours, set_language, set_log_mode, set_schedule, )
 from systemd_utils import run_cmd, sync_timer, unit_is_active
 from task_store import (add_fight_task, fight_sequence, load_task_json, long_task_sequence, parse_fight_add_args,
                         remove_fight_task, save_task_json, short_task_sequence, )
@@ -351,6 +351,60 @@ async def log_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> N
 
 
 @auth_required
+async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> None:
+    name = current_name(context)
+    profile = get_profile(name)
+    lang = profile.lang
+
+    if not context.args:
+        state = text_for(lang, "state_on" if profile.alert.enabled else "state_off")
+        await update.effective_message.reply_text(
+            text_for(
+                lang,
+                "alert_status",
+                name=name,
+                state=state,
+                duration=hours_text(lang, profile.alert.hours),
+            ) + "\n\n" + f"{text_for(lang, 'commands_label')}:\n" +
+            html_code_lines(["/alert on", "/alert off", "/alert time 24", ]),
+            parse_mode="HTML",
+        )
+        return
+
+    action = context.args[0].lower()
+
+    if action in {"on", "off"} and len(context.args) == 1:
+        alert = set_alert_enabled(name, action == "on")
+        await update.effective_message.reply_text(
+            text_for(
+                lang,
+                "alert_enabled" if alert.enabled else "alert_disabled",
+                name=name,
+                duration=hours_text(lang, alert.hours),
+            )
+        )
+        return
+
+    if action == "time" and len(context.args) == 2:
+        try:
+            hours = parse_alert_hours(context.args[1])
+        except ValueError:
+            await update.effective_message.reply_text(text_for(lang, "alert_invalid_time", ))
+            return
+
+        alert = set_alert_hours(name, hours)
+        await update.effective_message.reply_text(
+            text_for(lang, "alert_time_set", name=name, duration=hours_text(lang, alert.hours), ))
+        return
+
+    await update.effective_message.reply_text(
+        f"{text_for(lang, 'usage_label')}:\n" +
+        html_code_lines(["/alert", "/alert on", "/alert off", "/alert time 24", ]),
+        parse_mode="HTML",
+    )
+
+
+@auth_required
 async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> None:
     name = current_name(context)
     old_lang = current_lang(name)
@@ -377,8 +431,8 @@ async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
     if chat is not None:
         await context.application.bot.set_my_commands(bot_commands(new_lang), scope=BotCommandScopeChat(chat.id), )
 
-    await update.effective_message.reply_text(text_for(new_lang, "lang_changed", ),
-                                              reply_markup=await control_keyboard(name), )
+    await update.effective_message.reply_text(text_for(new_lang, "lang_changed", ))
+    await update.effective_message.reply_text(await status_text(name), reply_markup=await control_keyboard(name), )
 
 
 @auth_required
@@ -446,6 +500,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
                 "/log ON",
                 "/log OFF",
                 "/log FULL",
+                "/alert",
+                "/alert on",
+                "/alert off",
+                "/alert time 24",
                 "/lang",
                 "/lang en",
                 "/lang zh",
@@ -561,6 +619,7 @@ def register_handlers(application: Application, ) -> None:
     application.add_handler(CommandHandler("task", task_command, ))
     application.add_handler(CommandHandler("fight", fight_command, ))
     application.add_handler(CommandHandler("log", log_command, ))
+    application.add_handler(CommandHandler("alert", alert_command, ))
     application.add_handler(CommandHandler("lang", lang_command, ))
     application.add_handler(CommandHandler("run", run_command, ))
     application.add_handler(CommandHandler("stop", stop_command, ))

@@ -89,5 +89,6 @@ echo
 echo "Preserved:"
 echo "  telegram_config.yaml"
 echo "  profiles.yaml"
+echo "  ~/.config/maa-tg-bot/alert_state.yaml"
 echo "  ~/.config/maa/"
 echo "  project files / virtual environment"

@@ -25,6 +25,7 @@ i18n.py              英文 / 中文界面翻译
 systemd_utils.py     用户级 Service / Timer / Journal 辅助功能
 task_store.py        任务 JSON 和 Fight 编辑
 log_monitor.py       基于 MaaCore TaskChain 回调的实时日志监控
+alert_checker.py     复用 MAA updater 的单次未运行提醒检查
 maa_config.py        路径和全局配置
 
 install.sh           初次安装 / 更新 systemd 配置
@@ -68,6 +69,9 @@ profile_a:
       - "06:33"
       - "14:33"
       - "17:33"
+  alert:
+    enabled: false
+    hours: 24
   log: "OFF"
   lang: "en"
 
@@ -78,6 +82,9 @@ profile_b:
     times:
       - "02:00"
       - "16:10"
+  alert:
+    enabled: false
+    hours: 24
   log: "OFF"
   lang: "zh"
 ```
@@ -85,6 +92,9 @@ profile_b:
 手动编写 YAML 时，建议给 `ON` / `OFF` 加上引号，以避免被 YAML 解析为布尔值。
 
 代码同时兼容 PyYAML 将未加引号的 `ON` / `OFF` 解析为布尔值的情况。
+
+`alert` 保存每个 Profile 的游戏未运行提醒设置。`hours` 只接受正整数小时，默认 24。
+提醒记录保存在 `~/.config/maa-tg-bot/alert_state.yaml`，同一次上次操作只会提醒一次。
 
 ### 从旧版本迁移
 
@@ -97,6 +107,9 @@ profile_a:
   schedule:
     enabled: false
     times: []
+  alert:
+    enabled: false
+    hours: 24
   log: "OFF"
   lang: "en"
 ```
@@ -184,21 +197,16 @@ Updater Service 会执行：
 ```text
 maa self update
 maa update
+检查已开启的游戏提醒
 ```
 
-Timer 可以配置为每天多次检查，例如：
+三个步骤都会尝试执行；其中一个失败不会阻止后续步骤，Service 最后会正常退出。
+游戏提醒与 MAA updater 一样频繁地检查，不会创建额外的 Service 或 Timer。
+
+Timer 每小时运行一次：
 
 ```ini
-OnCalendar=*-*-* 00,06,12,18:00:00
-```
-
-即每天：
-
-```text
-00:00
-06:00
-12:00
-18:00
+OnCalendar=hourly
 ```
 
 检查一次更新。
@@ -219,11 +227,25 @@ OnCalendar=*-*-* 00,06,12,18:00:00
 /task
 /fight
 /log
+/alert
 /lang
 /run
 /stop
 /help
 ```
+
+游戏未运行提醒：
+
+```text
+/alert
+/alert on
+/alert off
+/alert time 24
+```
+
+`/alert time` 只接受正整数小时。达到设定时限后只发送一次简短提醒；关闭再开启或
+修改时限不会重复提醒同一次上次操作，只有 MAA Profile Service 的上次操作时间变化后
+才会允许下一次提醒。提醒检查与现有 MAA updater 一样频繁。
 
 ## 5. Windows GUI 配置转换
 
@@ -276,6 +298,7 @@ maa-update.timer
 
 - `telegram_config.yaml`
 - `profiles.yaml`
+- `~/.config/maa-tg-bot/alert_state.yaml`
 - `~/.config/maa/`
 - maa-cli Task
 - maa-cli Profile
