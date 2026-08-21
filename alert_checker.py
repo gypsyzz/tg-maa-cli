@@ -60,7 +60,10 @@ async def check_profile_alert(
     if current_time - action.timestamp < timedelta(hours=profile.alert.hours):
         return False
 
-    await bot.send_message(chat_id=profile.chat_id, text=text_for(profile.lang, "alert_due", ))
+    await bot.send_message(
+        chat_id=profile.chat_id,
+        text=text_for(profile.lang, "alert_due", threshold=profile.alert.hours, ),
+    )
 
     state[name] = action.key
     save_alert_state(state, state_path)

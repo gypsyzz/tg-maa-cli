@@ -60,7 +60,7 @@ TEXT = {
         "alert_disabled": "🔕 {name} game reminder disabled.",
         "alert_time_set": "✅ {name} game reminder time set to {duration}.",
         "alert_invalid_time": "❌ Time must be a positive whole number of hours, e.g. /alert time 24.",
-        "alert_due": "You are due to run the game.",
+        "alert_due": "Last MAA run was over {threshold} hours. Did you forget to turn on scheduler?",
         "hour_one": "hour",
         "hour_many": "hours",
 
@@ -156,7 +156,7 @@ TEXT = {
         "alert_disabled": "🔕 {name} 游戏提醒已关闭。",
         "alert_time_set": "✅ {name} 游戏提醒时限已设为 {duration}。",
         "alert_invalid_time": "❌ 时限必须是正整数小时，例如 /alert time 24。",
-        "alert_due": "你该运行游戏了。",
+        "alert_due": "上次运行 MAA 已超过 {threshold} 小时。您是否忘记开启定时计划了？",
         "hour_one": "小时",
         "hour_many": "小时",
 
