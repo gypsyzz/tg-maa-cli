@@ -1,6 +1,7 @@
 # Secrets / machine-specific runtime state
 telegram_config.yaml
 profiles.yaml
+alert_state.yaml
 
 # Python
 __pycache__/
