@@ -7,6 +7,6 @@ Type=oneshot
 WorkingDirectory="@WORKDIR@"
 Environment="MAA_BOT_CONFIG=@CONFIG@"
 Environment="PATH=@PATH@"
-ExecStart=-@MAA_BIN@ self update
-ExecStart=-@MAA_BIN@ update
-ExecStart=-@PYTHON@ @WORKDIR@/maa_control.py --check-alerts
+ExecStart=@MAA_BIN@ self update
+ExecStart=@MAA_BIN@ update
+ExecStart=@PYTHON@ @WORKDIR@/maa_control.py --check-alerts
