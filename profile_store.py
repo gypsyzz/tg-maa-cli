@@ -15,6 +15,21 @@ LOG_MODES = {"OFF", "ON", "FULL"}
 DEFAULT_ALERT_HOURS = 24
 
 
+class _QuotedTime(str):
+    pass
+
+
+class _ProfileDumper(yaml.SafeDumper):
+    pass
+
+
+def _represent_quoted_time(dumper: yaml.SafeDumper, value: _QuotedTime) -> yaml.nodes.ScalarNode:
+    return dumper.represent_scalar("tag:yaml.org,2002:str", value, style='"')
+
+
+_ProfileDumper.add_representer(_QuotedTime, _represent_quoted_time)
+
+
 @dataclass
 class ScheduleState:
     enabled: bool
@@ -224,7 +239,7 @@ def save_profiles(profiles: dict[str, ProfileState]) -> None:
             "chat_id": chat_id,
             "schedule": {
                 "enabled": bool(profile.schedule.enabled) if times else False,
-                "times": times,
+                "times": [_QuotedTime(value) for value in times],
             },
             "alert": {
                 "enabled": bool(profile.alert.enabled),
@@ -237,7 +252,7 @@ def save_profiles(profiles: dict[str, ProfileState]) -> None:
     PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     tmp = PROFILES_PATH.with_suffix(PROFILES_PATH.suffix + ".tmp")
-    tmp.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    tmp.write_text(yaml.dump(data, Dumper=_ProfileDumper, allow_unicode=True, sort_keys=False), encoding="utf-8")
     tmp.replace(PROFILES_PATH)
 
 
