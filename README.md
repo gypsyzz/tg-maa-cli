@@ -234,6 +234,15 @@ OnCalendar=hourly
 /help
 ```
 
+自动日志模式：
+
+- `OFF`：不自动发送任务或进程结果。
+- `ON`：仅发送 MaaCore 任务错误，以及 MAA Profile Service 的非成功退出。
+- `FULL`：发送所有 MaaCore 任务结果，并发送 MAA Profile Service 的非成功退出。
+
+进程级错误通知包含 systemd 结果、进程状态，以及数量受限的相关 MaaCore 或 journal
+错误行。同一次运行已经发送 `TaskChainError` 时，不会再重复发送进程退出通知。
+
 游戏未运行提醒：
 
 ```text

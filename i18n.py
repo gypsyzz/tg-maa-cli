@@ -52,8 +52,8 @@ TEXT = {
 
         "log_mode_title": "📜 {name} log mode: {mode}",
         "log_desc_off": "automatic log messages disabled",
-        "log_desc_on": "send only explicitly non-Completed MAA subtask summaries",
-        "log_desc_full": "send log after each MAA subtask finishes",
+        "log_desc_on": "send MAA task and process errors only",
+        "log_desc_full": "send every MAA task result plus process errors",
 
         "alert_status": "🔔 {name} game reminder\nState: {state}\nTime: {duration}",
         "alert_enabled": "🔔 {name} game reminder enabled after {duration}.",
@@ -78,6 +78,9 @@ TEXT = {
 
         "full_log_title": "📜 {name} full run log",
         "incomplete_log_title": "⚠️ {name} incomplete task log",
+        "program_error_title": "❌ MAA {name} process failed",
+        "program_error_result": "Systemd result: {result}",
+        "program_error_status": "Process status: {status}",
 
         "unauthorized": "Unauthorized",
 
@@ -148,8 +151,8 @@ TEXT = {
 
         "log_mode_title": "📜 {name} 日志模式: {mode}",
         "log_desc_off": "自动日志消息已关闭",
-        "log_desc_on": "仅当 MAA 明确报告子任务状态不是 Completed 时发送",
-        "log_desc_full": "每个 MAA 子任务结束后发送运行结果",
+        "log_desc_on": "仅发送 MAA 任务错误和进程级错误",
+        "log_desc_full": "发送所有 MAA 任务结果和进程级错误",
 
         "alert_status": "🔔 {name} 游戏提醒\n状态: {state}\n时限: {duration}",
         "alert_enabled": "🔔 {name} 游戏提醒已开启，时限为 {duration}。",
@@ -174,6 +177,9 @@ TEXT = {
 
         "full_log_title": "📜 {name} 完整运行日志",
         "incomplete_log_title": "⚠️ {name} 未完成任务日志",
+        "program_error_title": "❌ MAA {name} 进程运行失败",
+        "program_error_result": "Systemd 结果：{result}",
+        "program_error_status": "进程状态：{status}",
 
         "unauthorized": "未授权",
 

@@ -57,6 +57,33 @@ async def systemctl_value(unit: str, prop: str, ) -> str:
     return result.stdout.strip()
 
 
+async def systemctl_properties(unit: str, *properties: str, ) -> dict[str, str]:
+    if not properties:
+        return {}
+
+    result = await run_cmd(
+        "systemctl",
+        "--user",
+        "show",
+        unit,
+        f"--property={','.join(properties)}",
+        "--no-pager",
+    )
+
+    if result.returncode != 0:
+        return {}
+
+    values: dict[str, str] = {}
+
+    for line in result.stdout.splitlines():
+        key, separator, value = line.partition("=")
+
+        if separator:
+            values[key] = value.strip()
+
+    return values
+
+
 async def unit_is_active(unit: str, ) -> bool:
     result = await run_cmd("systemctl", "--user", "is-active", "--quiet", unit, )
 

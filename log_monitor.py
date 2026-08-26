@@ -9,10 +9,10 @@ from pathlib import Path
 
 from telegram.ext import Application
 
-from i18n import text_for
+from i18n import result_text, text_for
 from maa_config import service_unit_for
 from profile_store import get_profile, load_profiles
-from systemd_utils import systemctl_value
+from systemd_utils import invocation_log, systemctl_properties
 from telegram_ui import PREFORMATTED_TEXT_LIMIT, send_profile_preformatted, split_text
 
 # ---------------------------------------------------------------------------
@@ -30,6 +30,11 @@ TASKCHAIN_CALLBACK_RE = re.compile(r"Assistant::append_callback \| " r"(?P<event
 TERMINAL_EVENTS = {"TaskChainCompleted", "TaskChainError", "TaskChainStopped", }
 
 EVENT_STATUS = {"TaskChainCompleted": "Completed", "TaskChainError": "Error", "TaskChainStopped": "Stopped", }
+
+FINAL_SERVICE_STATES = {"failed", "inactive", }
+MAX_PROGRAM_FAILURE_LINES = 40
+MAX_JOURNAL_CONTEXT_LINES = 20
+MAX_ASST_ERROR_SCAN_BYTES = 2 * 1024 * 1024
 
 # Lines worth retaining when diagnosing a failed task.
 #
@@ -84,6 +89,16 @@ class ActiveTask:
     failure_lines: list[str] = field(
         default_factory=list
     )
+
+
+@dataclass(frozen=True)
+class ProfileServiceState:
+    invocation_id: str
+    main_pid: int
+    exec_main_pid: int
+    active_state: str
+    result: str
+    exec_main_status: str
 
 
 # ---------------------------------------------------------------------------
@@ -334,6 +349,68 @@ def failure_details(task: ActiveTask, ) -> str:
     return "\n".join(task.failure_lines)
 
 
+def append_program_failure_line(lines: list[str], line: str, ) -> None:
+    if not line or (lines and lines[-1] == line):
+        return
+
+    lines.append(line)
+
+    if len(lines) > MAX_PROGRAM_FAILURE_LINES:
+        del lines[:-MAX_PROGRAM_FAILURE_LINES]
+
+
+def program_failure_details(log_text: str, ) -> str:
+    failure_lines: list[str] = []
+
+    for line in log_text.splitlines():
+        failure_line = extract_failure_line(line)
+
+        if failure_line is not None:
+            append_program_failure_line(failure_lines, failure_line, )
+
+    if failure_lines:
+        return "\n".join(failure_lines)
+
+    context_lines = [line.strip() for line in log_text.splitlines() if line.strip()]
+
+    return "\n".join(context_lines[-MAX_JOURNAL_CONTEXT_LINES:])
+
+
+def pid_error_details(log_path: Path, pid: int, ) -> str:
+    if pid <= 0:
+        return ""
+
+    try:
+        with log_path.open("rb") as file:
+            file.seek(0, 2)
+            size = file.tell()
+            start = max(0, size - MAX_ASST_ERROR_SCAN_BYTES)
+            file.seek(start)
+            data = file.read()
+    except OSError:
+        return ""
+
+    if start > 0:
+        _, separator, data = data.partition(b"\n")
+
+        if not separator:
+            return ""
+
+    marker = f"[Px{pid}]"
+    error_lines: list[str] = []
+
+    for raw_line in data.decode("utf-8", errors="replace").splitlines():
+        if marker not in raw_line or "[ERR]" not in raw_line:
+            continue
+
+        failure_line = extract_failure_line(raw_line)
+
+        if failure_line is not None:
+            append_program_failure_line(error_lines, failure_line, )
+
+    return "\n".join(error_lines)
+
+
 # ---------------------------------------------------------------------------
 # Result formatting
 # ---------------------------------------------------------------------------
@@ -508,6 +585,81 @@ async def report_finished_task(
         session_results.pop(pid, None, )
 
 
+async def report_finished_invocations(
+        application: Application,
+        asst_log_path: Path,
+        service_states: dict[str, ProfileServiceState],
+        handled_invocations: dict[str, str],
+        invocation_failure_lines: dict[str, list[str]],
+        task_error_invocations: set[str],
+) -> None:
+    for name, state in service_states.items():
+        invocation_id = state.invocation_id
+
+        if (
+                not invocation_id
+                or state.active_state not in FINAL_SERVICE_STATES
+                or handled_invocations.get(name) == invocation_id
+        ):
+            continue
+
+        try:
+            profile = get_profile(name)
+            mode = normalize_log_mode(profile.log)
+
+            if (
+                    state.result in {"", "success", }
+                    or mode == "OFF"
+                    or invocation_id in task_error_invocations
+            ):
+                continue
+
+            details = "\n".join(invocation_failure_lines.get(invocation_id, []))
+
+            if not details and state.exec_main_pid > 0:
+                details = await asyncio.to_thread(
+                    pid_error_details,
+                    asst_log_path,
+                    state.exec_main_pid,
+                )
+
+            if not details:
+                try:
+                    details = program_failure_details(await invocation_log(invocation_id, ))
+                except Exception:
+                    details = ""
+
+            result = result_text(profile.lang, state.result)
+            text = text_for(profile.lang, "program_error_result", result=result, )
+
+            if state.exec_main_status:
+                text += "\n" + text_for(
+                    profile.lang,
+                    "program_error_status",
+                    status=state.exec_main_status,
+                )
+
+            if details:
+                text += f"\n\n{details}"
+
+            await send_profile_preformatted(
+                application,
+                name=name,
+                title=text_for(profile.lang, "program_error_title", name=name, ),
+                text=text,
+            )
+
+        except Exception:
+            # Telegram/journal failures must not stop monitoring
+            # the remaining profiles.
+            pass
+
+        finally:
+            handled_invocations[name] = invocation_id
+            invocation_failure_lines.pop(invocation_id, None, )
+            task_error_invocations.discard(invocation_id)
+
+
 # ---------------------------------------------------------------------------
 # Process MaaCore log lines
 # ---------------------------------------------------------------------------
@@ -519,11 +671,14 @@ async def process_log_line(
             int,
             str,
         ],
+        pid_to_invocation: dict[int, str],
         active_tasks: dict[
             int,
             ActiveTask,
         ],
         session_results: dict[int, list[str]],
+        invocation_failure_lines: dict[str, list[str]],
+        task_error_invocations: set[str],
 ) -> None:
     line = strip_ansi(line)
 
@@ -554,6 +709,14 @@ async def process_log_line(
     )
 
     failure_line = extract_failure_line(line)
+
+    invocation_id = pid_to_invocation.get(pid)
+
+    if failure_line is not None and invocation_id is not None:
+        append_program_failure_line(
+            invocation_failure_lines.setdefault(invocation_id, []),
+            failure_line,
+        )
 
     if (current is not None and failure_line is not None):
         current.failure_lines.append(failure_line)
@@ -609,6 +772,9 @@ async def process_log_line(
     try:
         await report_finished_task(application, name, pid, task, event, session_results, )
 
+        if event == "TaskChainError" and invocation_id is not None:
+            task_error_invocations.add(invocation_id)
+
     finally:
         active_tasks.pop(pid, None, )
 
@@ -617,39 +783,62 @@ async def process_log_line(
 # systemd PID -> profile mapping
 # ---------------------------------------------------------------------------
 
-async def refresh_profile_pids(
+async def refresh_profile_services(
         pid_to_profile: dict[
             int,
             str,
         ],
+        pid_to_invocation: dict[int, str],
         profile_names: tuple[str, ...],
-) -> set[int]:
+) -> tuple[set[int], dict[str, ProfileServiceState]]:
     """
     Map each profile's systemd MainPID to its
     Telegram/MAA profile name.
     """
 
     active_pids: set[int] = set()
+    states: dict[str, ProfileServiceState] = {}
 
     for name in profile_names:
         unit = service_unit_for(name)
 
         try:
-            value = await systemctl_value(unit, "MainPID", )
-
-            pid = int(value or 0)
+            values = await systemctl_properties(
+                unit,
+                "InvocationID",
+                "MainPID",
+                "ExecMainPID",
+                "ActiveState",
+                "Result",
+                "ExecMainStatus",
+            )
+            pid = int(values.get("MainPID") or 0)
+            exec_main_pid = int(values.get("ExecMainPID") or 0)
 
         except (Exception, TypeError, ValueError,):
             continue
+
+        state = ProfileServiceState(
+            invocation_id=values.get("InvocationID", ""),
+            main_pid=pid,
+            exec_main_pid=exec_main_pid,
+            active_state=values.get("ActiveState", ""),
+            result=values.get("Result", ""),
+            exec_main_status=values.get("ExecMainStatus", ""),
+        )
+        states[name] = state
 
         if pid <= 0:
             continue
 
         pid_to_profile[pid] = name
 
+        if state.invocation_id:
+            pid_to_invocation[pid] = state.invocation_id
+
         active_pids.add(pid)
 
-    return active_pids
+    return active_pids, states
 
 
 def discard_inactive_session_results(
@@ -673,6 +862,7 @@ def discard_inactive_session_results(
 async def prune_stale_pids(
         application: Application,
         pid_to_profile: dict[int, str],
+        pid_to_invocation: dict[int, str],
         active_tasks: dict[int, ActiveTask],
         session_results: dict[int, list[str]],
         active_pids: set[int],
@@ -703,6 +893,7 @@ async def prune_stale_pids(
 
         finally:
             pid_to_profile.pop(pid, None, )
+            pid_to_invocation.pop(pid, None, )
             active_tasks.pop(pid, None, )
             session_results.pop(pid, None, )
 
@@ -721,6 +912,9 @@ async def log_monitor_loop(
     # Maa process PID -> profile
     pid_to_profile: dict[int, str,] = {}
 
+    # Maa process PID -> systemd invocation ID
+    pid_to_invocation: dict[int, str,] = {}
+
     # Maa process PID -> currently running
     # top-level TaskChain
     active_tasks: dict[int, ActiveTask,] = {}
@@ -728,7 +922,23 @@ async def log_monitor_loop(
     # Maa process PID -> task results waiting for a
     # mode-specific session boundary.
     session_results: dict[int, list[str]] = {}
+
+    # Error details retained until the corresponding systemd
+    # invocation reaches a terminal state.
+    invocation_failure_lines: dict[str, list[str]] = {}
+    task_error_invocations: set[str] = set()
     profile_names = tuple(load_profiles())
+
+    _, initial_states = await refresh_profile_services(
+        pid_to_profile,
+        pid_to_invocation,
+        profile_names,
+    )
+    handled_invocations = {
+        name: state.invocation_id
+        for name, state in initial_states.items()
+        if state.invocation_id and state.active_state in FINAL_SERVICE_STATES
+    }
 
     try:
         while True:
@@ -740,9 +950,10 @@ async def log_monitor_loop(
             # important because MaaCore may emit
             # its final TaskChain callback just
             # before the systemd service exits.
-            active_pids = (
-                await refresh_profile_pids(
+            active_pids, service_states = (
+                await refresh_profile_services(
                     pid_to_profile,
+                    pid_to_invocation,
                     profile_names,
                 )
             )
@@ -762,8 +973,11 @@ async def log_monitor_loop(
                         application,
                         line,
                         pid_to_profile,
+                        pid_to_invocation,
                         active_tasks,
                         session_results,
+                        invocation_failure_lines,
+                        task_error_invocations,
                     )
 
                 except Exception:
@@ -777,9 +991,19 @@ async def log_monitor_loop(
             await prune_stale_pids(
                 application,
                 pid_to_profile,
+                pid_to_invocation,
                 active_tasks,
                 session_results,
                 active_pids,
+            )
+
+            await report_finished_invocations(
+                application,
+                log_path,
+                service_states,
+                handled_invocations,
+                invocation_failure_lines,
+                task_error_invocations,
             )
 
             await asyncio.sleep(0.5)
