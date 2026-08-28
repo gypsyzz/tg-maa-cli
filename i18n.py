@@ -67,6 +67,9 @@ TEXT = {
         "start_failed": "❌ Start failed:\n{error}",
         "stop_failed": "❌ Stop failed:\n{error}",
 
+        "sudo_denied": "❌ Admin access denied. The configured admin profile and Telegram user ID must both match.",
+        "sudo_not_allowed": "❌ /sudo does not allow the {command} command. Allowed: fight, schedule, run, stop.",
+
         "help_title": "MAA {name} commands",
         "continued": "continued",
 
@@ -165,6 +168,9 @@ TEXT = {
 
         "start_failed": "❌ 启动失败:\n{error}",
         "stop_failed": "❌ 停止失败:\n{error}",
+
+        "sudo_denied": "❌ 管理员权限被拒绝。管理员配置和 Telegram 用户 ID 必须同时匹配。",
+        "sudo_not_allowed": "❌ /sudo 不允许执行 {command} 命令。允许的命令：fight、schedule、run、stop。",
 
         "help_title": "MAA {name} 命令",
         "continued": "继续",

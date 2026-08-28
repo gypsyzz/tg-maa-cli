@@ -62,6 +62,7 @@ cp profiles.yaml.example profiles.yaml
 ```yaml
 profile_a:
   chat_id:
+  admin: false
   schedule:
     enabled: false
     times:
@@ -77,6 +78,7 @@ profile_a:
 
 profile_b:
   chat_id:
+  admin: false
   schedule:
     enabled: false
     times:
@@ -95,6 +97,19 @@ profile_b:
 
 `alert` 保存每个 Profile 的游戏未运行提醒设置。`hours` 只接受正整数小时，默认 24。
 提醒记录保存在 `~/.config/maa-tg-bot/alert_state.yaml`，同一次上次操作只会提醒一次。
+
+将私聊 Profile 设置为 `admin: true` 后，该 Profile 可以代表其他 Profile 执行受限命令：
+
+```text
+/sudo lun fight add 1-7
+/sudo lun schedule add 12:00
+/sudo lun run
+/sudo lun stop
+```
+
+委托命令仅允许 `fight`、`schedule`、`run` 和 `stop`。管理员校验同时要求消息的 Telegram
+`user_id` 与管理员 Profile 的 `chat_id` 完全相同，因此群聊 Profile 即使误设 `admin: true`
+也无法取得管理员权限。
 
 ### 从旧版本迁移
 

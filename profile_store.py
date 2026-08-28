@@ -45,6 +45,7 @@ class AlertState:
 @dataclass
 class ProfileState:
     chat_id: int
+    admin: bool
     schedule: ScheduleState
     alert: AlertState
     log: str
@@ -118,6 +119,11 @@ def parse_profile(name: str, raw: object) -> ProfileState:
 
     chat_id = normalize_chat_id(raw["chat_id"], name=name)
 
+    raw_admin = raw.get("admin", False)
+
+    if type(raw_admin) is not bool:
+        raise ValueError(f"{PROFILES_PATH}: {name}.admin must be true or false.")
+
     raw_schedule = raw.get("schedule")
 
     if raw_schedule is None:
@@ -173,6 +179,7 @@ def parse_profile(name: str, raw: object) -> ProfileState:
 
     return ProfileState(
         chat_id=chat_id,
+        admin=raw_admin,
         schedule=schedule,
         alert=alert,
         log=log_mode,
@@ -237,6 +244,7 @@ def save_profiles(profiles: dict[str, ProfileState]) -> None:
 
         data[name] = {
             "chat_id": chat_id,
+            "admin": bool(profile.admin),
             "schedule": {
                 "enabled": bool(profile.schedule.enabled) if times else False,
                 "times": [_QuotedTime(value) for value in times],
@@ -276,6 +284,16 @@ def get_profile_by_chat_id(chat_id: int) -> tuple[str, ProfileState] | None:
             return name, profile
 
     return None
+
+
+def resolve_profile_name(value: object) -> str:
+    requested_slug = slug_for(validate_name(value))
+
+    for name in load_profiles():
+        if slug_for(name) == requested_slug:
+            return name
+
+    raise ValueError(f"Unknown profile: {value}")
 
 
 def set_schedule(

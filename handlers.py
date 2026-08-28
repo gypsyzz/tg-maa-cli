@@ -9,7 +9,8 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from i18n import bot_commands, hours_text, language_name, mode_text, normalize_language, text_for
 from maa_config import service_unit_for
 from profile_store import (get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, parse_alert_hours,
-                           set_alert_enabled, set_alert_hours, set_language, set_log_mode, set_schedule, )
+                           resolve_profile_name, set_alert_enabled, set_alert_hours, set_language, set_log_mode,
+                           set_schedule, )
 from systemd_utils import run_cmd, sync_timer, unit_is_active
 from task_store import (add_fight_task, fight_sequence, load_task_json, long_task_sequence, parse_fight_add_args,
                         remove_fight_task, save_task_json, short_task_sequence, )
@@ -449,7 +450,8 @@ async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> N
                 text_for(lang, "start_failed", error=(result.stderr or result.stdout), ))
             return
 
-    await update.effective_message.reply_text(await status_text(name), reply_markup=await control_keyboard(name), )
+    reply_markup = (None if context.user_data.get("maa_sudo_target") else await control_keyboard(name))
+    await update.effective_message.reply_text(await status_text(name), reply_markup=reply_markup, )
 
 
 @auth_required
@@ -466,7 +468,69 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
                 text_for(lang, "stop_failed", error=(result.stderr or result.stdout), ))
             return
 
-    await update.effective_message.reply_text(await status_text(name), reply_markup=await control_keyboard(name), )
+    reply_markup = (None if context.user_data.get("maa_sudo_target") else await control_keyboard(name))
+    await update.effective_message.reply_text(await status_text(name), reply_markup=reply_markup, )
+
+
+@auth_required
+async def sudo_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> None:
+    caller_name = current_name(context)
+    caller_profile = get_profile(caller_name)
+    caller_lang = caller_profile.lang
+    user = update.effective_user
+
+    if not caller_profile.admin or user is None or user.id != caller_profile.chat_id:
+        await update.effective_message.reply_text(text_for(caller_lang, "sudo_denied", ))
+        return
+
+    if len(context.args) < 2:
+        await update.effective_message.reply_text(
+            f"{text_for(caller_lang, 'usage_label')}:\n" + html_code("/sudo PROFILE COMMAND [ARGS ...]"),
+            parse_mode="HTML",
+        )
+        return
+
+    try:
+        target_name = resolve_profile_name(context.args[0])
+    except ValueError as exc:
+        await reply_error(update, exc)
+        return
+
+    command = context.args[1].casefold()
+    delegated_handlers = {
+        "fight": fight_command,
+        "schedule": schedule_command,
+        "run": run_command,
+        "stop": stop_command,
+    }
+    handler = delegated_handlers.get(command)
+
+    if handler is None:
+        await update.effective_message.reply_text(text_for(caller_lang, "sudo_not_allowed", command=command, ))
+        return
+
+    original_name = context.user_data.get("maa_name")
+    original_args = context.args
+    had_sudo_target = "maa_sudo_target" in context.user_data
+    original_sudo_target = context.user_data.get("maa_sudo_target")
+
+    try:
+        context.user_data["maa_name"] = target_name
+        context.user_data["maa_sudo_target"] = target_name
+        context.args = context.args[2:]
+        await handler.__wrapped__(update, context, )
+    finally:
+        context.args = original_args
+
+        if original_name is None:
+            context.user_data.pop("maa_name", None)
+        else:
+            context.user_data["maa_name"] = original_name
+
+        if had_sudo_target:
+            context.user_data["maa_sudo_target"] = original_sudo_target
+        else:
+            context.user_data.pop("maa_sudo_target", None)
 
 
 @auth_required
@@ -623,5 +687,6 @@ def register_handlers(application: Application, ) -> None:
     application.add_handler(CommandHandler("lang", lang_command, ))
     application.add_handler(CommandHandler("run", run_command, ))
     application.add_handler(CommandHandler("stop", stop_command, ))
+    application.add_handler(CommandHandler("sudo", sudo_command, ))
     application.add_handler(CommandHandler("help", help_command, ))
     application.add_handler(CallbackQueryHandler(button_callback, pattern=r"^maa:", ))

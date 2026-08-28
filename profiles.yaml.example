@@ -1,5 +1,6 @@
 profile_a:
   chat_id:
+  admin: false
   schedule:
     enabled: false
     times:
@@ -15,6 +16,7 @@ profile_a:
 
 profile_b:
   chat_id:
+  admin: false
   schedule:
     enabled: false
     times:
