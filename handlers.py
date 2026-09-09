@@ -7,10 +7,12 @@ from telegram import BotCommandScopeChat, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from i18n import bot_commands, hours_text, language_name, mode_text, normalize_language, text_for
-from maa_config import service_unit_for
+from maa_config import schedule_check_timer_unit_for, service_unit_for
 from profile_store import (get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, parse_alert_hours,
                            resolve_profile_name, set_alert_enabled, set_alert_hours, set_language, set_log_mode,
-                           set_schedule, )
+                           set_schedule, validate_schedule_check, validate_windows_app_control, )
+from schedule_health_checker import (CheckStatus, check_container, check_windows_maa, collect_failure_message,
+                                     start_windows_maa, stop_windows_maa, wait_for_windows_maa, )
 from systemd_utils import run_cmd, sync_timer, unit_is_active
 from task_store import (add_fight_task, fight_sequence, load_task_json, long_task_sequence, parse_fight_add_args,
                         remove_fight_task, save_task_json, short_task_sequence, )
@@ -102,7 +104,7 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE, )
             return
 
         try:
-            schedule = set_schedule(name, times=values, enabled=True, )
+            schedule = set_schedule(name, times=values, run_enabled=True, )
             await sync_timer(name, schedule)
         except (ValueError, RuntimeError) as exc:
             await reply_error(update, exc)
@@ -123,15 +125,21 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE, )
             current = get_profile(name).schedule
             times = normalize_times([*current.times, *values, ])
 
-            enabled = (current.enabled if current.times else True)
+            run_enabled = (current.run_enabled if current.times else True)
+            check_enabled = (current.check_enabled if current.times else False)
 
-            schedule = set_schedule(name, times=times, enabled=enabled, )
+            schedule = set_schedule(
+                name,
+                times=times,
+                run_enabled=run_enabled,
+                check_enabled=check_enabled,
+            )
             await sync_timer(name, schedule)
         except (ValueError, RuntimeError) as exc:
             await reply_error(update, exc)
             return
 
-        state = (text_for(lang, "state_on") if schedule.enabled else text_for(lang, "state_off"))
+        state = (text_for(lang, "state_on") if schedule.run_enabled else text_for(lang, "state_off"))
 
         await update.effective_message.reply_text(
             text_for(lang, "schedule_updated", name=name, state=state, ) + "\n" + "\n".join(
@@ -149,14 +157,19 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE, )
             remove = set(normalize_times(values))
             times = [value for value in current.times if value not in remove]
 
-            schedule = set_schedule(name, times=times, enabled=(current.enabled if times else False), )
+            schedule = set_schedule(
+                name,
+                times=times,
+                run_enabled=(current.run_enabled if times else False),
+                check_enabled=(current.check_enabled if times else False),
+            )
             await sync_timer(name, schedule)
         except (ValueError, RuntimeError) as exc:
             await reply_error(update, exc)
             return
 
         if schedule.times:
-            state = (text_for(lang, "state_on") if schedule.enabled else text_for(lang, "state_off"))
+            state = (text_for(lang, "state_on") if schedule.run_enabled else text_for(lang, "state_off"))
             message = (text_for(lang, "schedule_updated", name=name, state=state, ) + "\n" + "\n".join(
                 f"• {value}" for value in schedule.times))
         else:
@@ -178,9 +191,9 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE, )
             return
 
         try:
-            schedule = set_schedule(name, enabled=False, )
+            schedule = set_schedule(name, run_enabled=False, )
             await sync_timer(name, schedule)
-        except RuntimeError as exc:
+        except (ValueError, RuntimeError) as exc:
             await reply_error(update, exc)
             return
 
@@ -200,9 +213,9 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE, )
             return
 
         try:
-            schedule = set_schedule(name, enabled=True, )
+            schedule = set_schedule(name, run_enabled=True, )
             await sync_timer(name, schedule)
-        except RuntimeError as exc:
+        except (ValueError, RuntimeError) as exc:
             await reply_error(update, exc)
             return
 
@@ -224,6 +237,171 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE, )
                 "/schedule remove 12:00",
                 "/schedule on",
                 "/schedule off",
+            ]
+        ),
+        parse_mode="HTML",
+    )
+
+
+@auth_required
+async def winmaa_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> None:
+    name = current_name(context)
+    profile = get_profile(name)
+    schedule = profile.schedule
+    lang = profile.lang
+
+    if not context.args:
+        timer_active = await unit_is_active(schedule_check_timer_unit_for(name))
+        timer_state = text_for(lang, "check_timer_active" if timer_active else "check_timer_inactive", )
+        lines = [
+            text_for(lang, "check_title", name=name, ),
+            f"{text_for(lang, 'check_timer_label')}: {timer_state}",
+        ]
+
+        try:
+            state = validate_schedule_check(name, profile.schedule_check)
+
+            if state.container_name:
+                container_status = await check_container(state)
+                lines.append(
+                    text_for(
+                        lang,
+                        "check_container_status",
+                        container_name=state.container_name,
+                        status=text_for(lang, f"check_container_{container_status.value}", ),
+                    )
+                )
+
+            windows_status = await check_windows_maa(state)
+            lines.append(
+                text_for(
+                    lang,
+                    "check_windows_status",
+                    status=text_for(lang, f"check_windows_{windows_status.value}", ),
+                )
+            )
+        except ValueError:
+            lines.append(text_for(lang, "check_not_configured", ))
+
+        await update.effective_message.reply_text("\n".join(lines))
+        return
+
+    action = context.args[0].casefold()
+
+    if action == "check" and len(context.args) == 1:
+        try:
+            validate_schedule_check(name, profile.schedule_check)
+            failure = await collect_failure_message(name, profile)
+        except ValueError:
+            await update.effective_message.reply_text(text_for(lang, "check_not_configured", ))
+            return
+
+        await update.effective_message.reply_text(
+            failure or text_for(lang, "check_healthy", name=name, )
+        )
+        return
+
+    if action == "monitor" and len(context.args) == 1:
+        timer_active = await unit_is_active(schedule_check_timer_unit_for(name))
+        timer_state = text_for(lang, "check_timer_active" if timer_active else "check_timer_inactive", )
+        await update.effective_message.reply_text(f"{text_for(lang, 'check_timer_label')}: {timer_state}")
+        return
+
+    if action == "monitor" and len(context.args) == 2 and context.args[1].casefold() == "on":
+        if not schedule.times:
+            await update.effective_message.reply_text(text_for(lang, "check_no_schedule", ))
+            return
+
+        try:
+            schedule = set_schedule(name, check_enabled=True, )
+            await sync_timer(name, schedule)
+        except (ValueError, RuntimeError) as exc:
+            await reply_error(update, exc)
+            return
+
+        await update.effective_message.reply_text(text_for(lang, "check_enabled", name=name, ))
+        return
+
+    if action == "monitor" and len(context.args) == 2 and context.args[1].casefold() == "off":
+        try:
+            schedule = set_schedule(name, check_enabled=False, )
+            await sync_timer(name, schedule)
+        except (ValueError, RuntimeError) as exc:
+            await reply_error(update, exc)
+            return
+
+        await update.effective_message.reply_text(text_for(lang, "check_disabled", name=name, ))
+        return
+
+    if action == "app" and len(context.args) == 1:
+        try:
+            state = validate_schedule_check(name, profile.schedule_check)
+        except ValueError:
+            await update.effective_message.reply_text(text_for(lang, "check_not_configured", ))
+            return
+
+        windows_status = await check_windows_maa(state)
+        await update.effective_message.reply_text(
+            text_for(lang, "check_windows_status", status=text_for(lang, f"check_windows_{windows_status.value}", ), )
+        )
+        return
+
+    if action == "app" and len(context.args) == 2 and context.args[1].casefold() in {"on", "off"}:
+        app_action = context.args[1].casefold()
+
+        try:
+            state = validate_windows_app_control(name, profile.schedule_check)
+        except ValueError:
+            await update.effective_message.reply_text(text_for(lang, "check_app_not_configured", ))
+            return
+
+        current_status = await wait_for_windows_maa(state, CheckStatus.OK if app_action == "on" else CheckStatus.DOWN,
+                                                    attempts=1, delay=0, )
+
+        if app_action == "on" and current_status is CheckStatus.OK:
+            await update.effective_message.reply_text(text_for(lang, "check_app_already_on", ))
+            return
+
+        if app_action == "off" and current_status is CheckStatus.DOWN:
+            await update.effective_message.reply_text(text_for(lang, "check_app_already_off", ))
+            return
+
+        result = (await start_windows_maa(state) if app_action == "on" else await stop_windows_maa(state))
+
+        if result.returncode != 0:
+            await update.effective_message.reply_text(
+                text_for(lang, "check_app_action_failed", action=text_for(lang, f"check_app_action_{app_action}"), )
+            )
+            return
+
+        expected = (CheckStatus.OK if app_action == "on" else CheckStatus.DOWN)
+        final_status = await wait_for_windows_maa(state, expected, attempts=8, delay=1, )
+
+        if final_status is not expected:
+            await update.effective_message.reply_text(
+                text_for(lang, "check_app_action_timeout", action=text_for(lang, f"check_app_action_{app_action}"), )
+            )
+            return
+
+        await update.effective_message.reply_text(
+            text_for(lang, "check_app_turned_on" if app_action == "on" else "check_app_turned_off", )
+        )
+        return
+
+    await update.effective_message.reply_text(
+        text_for(lang, "unknown_check", )
+        + "\n\n"
+        + f"{text_for(lang, 'commands_label')}:\n"
+        + html_code_lines(
+            [
+                "/winmaa",
+                "/winmaa check",
+                "/winmaa monitor",
+                "/winmaa monitor on",
+                "/winmaa monitor off",
+                "/winmaa app",
+                "/winmaa app on",
+                "/winmaa app off",
             ]
         ),
         parse_mode="HTML",
@@ -278,14 +456,14 @@ async def fight_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) ->
     if action == "add":
         try:
             stage, position = parse_fight_add_args(values)
-            overall_index, fight_position = (add_fight_task(data, stage, position, ))
+            overall_index = add_fight_task(data, stage, position, )
             save_task_json(path, data)
         except (ValueError, OSError) as exc:
             await reply_error(update, exc)
             return
 
-        await reply_preformatted(update, name, text_for(lang, "fight_added", stage=stage, task_index=overall_index,
-                                                        fight_position=fight_position, ), short_task_sequence(data), )
+        await reply_preformatted(update, name, text_for(lang, "fight_added", stage=stage, task_index=overall_index, ),
+                                 short_task_sequence(data), )
         return
 
     if action == "remove":
@@ -313,7 +491,7 @@ async def fight_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) ->
 
     await update.effective_message.reply_text(
         text_for(lang, "unknown_fight", ) + "\n\n" + f"{text_for(lang, 'commands_label')}:\n" +
-        html_code_lines(["/fight", "/fight add 1-7", "/fight add 1-7 0", "/fight remove 5", ]), parse_mode="HTML", )
+        html_code_lines(["/fight", "/fight add 1-7", "/fight add 1-7 5", "/fight remove 5", ]), parse_mode="HTML", )
 
 
 @auth_required
@@ -500,6 +678,7 @@ async def sudo_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
     delegated_handlers = {
         "fight": fight_command,
         "schedule": schedule_command,
+        "winmaa": winmaa_command,
         "run": run_command,
         "stop": stop_command,
     }
@@ -568,6 +747,14 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
                 "/alert on",
                 "/alert off",
                 "/alert time 24",
+                "/winmaa",
+                "/winmaa check",
+                "/winmaa monitor",
+                "/winmaa monitor on",
+                "/winmaa monitor off",
+                "/winmaa app",
+                "/winmaa app on",
+                "/winmaa app off",
                 "/lang",
                 "/lang en",
                 "/lang zh",
@@ -651,9 +838,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, ) 
 
         if current.times:
             try:
-                schedule = set_schedule(name, enabled=False, )
+                schedule = set_schedule(name, run_enabled=False, )
                 await sync_timer(name, schedule, )
-            except RuntimeError as exc:
+            except (ValueError, RuntimeError) as exc:
                 await reply_error(update, exc, )
                 return
 
@@ -668,9 +855,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, ) 
             return
 
         try:
-            schedule = set_schedule(name, enabled=True, )
+            schedule = set_schedule(name, run_enabled=True, )
             await sync_timer(name, schedule, )
-        except RuntimeError as exc:
+        except (ValueError, RuntimeError) as exc:
             await reply_error(update, exc, )
             return
 
@@ -684,6 +871,7 @@ def register_handlers(application: Application, ) -> None:
     application.add_handler(CommandHandler("fight", fight_command, ))
     application.add_handler(CommandHandler("log", log_command, ))
     application.add_handler(CommandHandler("alert", alert_command, ))
+    application.add_handler(CommandHandler("winmaa", winmaa_command, ))
     application.add_handler(CommandHandler("lang", lang_command, ))
     application.add_handler(CommandHandler("run", run_command, ))
     application.add_handler(CommandHandler("stop", stop_command, ))

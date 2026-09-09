@@ -48,12 +48,8 @@ def slug_for(name: str) -> str:
     return validate_name(name).lower()
 
 
-def task_for(name: str) -> str:
-    return slug_for(name)
-
-
 def task_file_for(name: str) -> Path:
-    return MAA_TASKS_DIR / f"{task_for(name)}.json"
+    return MAA_TASKS_DIR / f"{slug_for(name)}.json"
 
 
 def service_unit_for(name: str) -> str:
@@ -66,3 +62,15 @@ def timer_unit_for(name: str) -> str:
 
 def timer_file_for(name: str) -> Path:
     return SYSTEMD_USER_DIR / timer_unit_for(name)
+
+
+def schedule_check_service_unit_for(name: str) -> str:
+    return f"maa-{slug_for(name)}-schedule-check.service"
+
+
+def schedule_check_timer_unit_for(name: str) -> str:
+    return f"maa-{slug_for(name)}-schedule-check.timer"
+
+
+def schedule_check_timer_file_for(name: str) -> Path:
+    return SYSTEMD_USER_DIR / schedule_check_timer_unit_for(name)

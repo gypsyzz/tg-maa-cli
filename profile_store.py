@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Iterable
 
 import yaml
@@ -11,6 +11,12 @@ from maa_config import PROFILES_PATH, slug_for, validate_name
 
 TIME_RE = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 ALERT_HOURS_RE = re.compile(r"^[1-9]\d*$")
+CONTAINER_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+WINDOWS_HOST_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
+WINDOWS_USER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+WINDOWS_PROCESS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+WINDOWS_EXECUTABLE_RE = re.compile(r"^[A-Za-z]:\\[^\r\n\x00]+$")
+WINDOWS_TASK_RE = re.compile(r"^[^\r\n\x00]+$")
 LOG_MODES = {"OFF", "ON", "FULL"}
 DEFAULT_ALERT_HOURS = 24
 
@@ -32,7 +38,8 @@ _ProfileDumper.add_representer(_QuotedTime, _represent_quoted_time)
 
 @dataclass
 class ScheduleState:
-    enabled: bool
+    run_enabled: bool
+    check_enabled: bool
     times: list[str]
 
 
@@ -43,10 +50,22 @@ class AlertState:
 
 
 @dataclass
+class ScheduleCheckState:
+    container_name: str
+    windows_host: str
+    windows_user: str
+    ssh_identity: str
+    windows_process: str
+    windows_executable: str
+    windows_start_task: str
+
+
+@dataclass
 class ProfileState:
     chat_id: int
     admin: bool
     schedule: ScheduleState
+    schedule_check: ScheduleCheckState
     alert: AlertState
     log: str
     lang: str
@@ -93,6 +112,84 @@ def parse_alert_hours(value: object) -> int:
     return validate_alert_hours(int(raw))
 
 
+def _validated_schedule_check_value(
+        raw: object,
+        *,
+        name: str,
+        field: str,
+        pattern: re.Pattern[str] | None = None,
+) -> str:
+    value = str(raw or "").strip()
+
+    if not value:
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.{field} is required when enabled.")
+
+    if pattern is not None and not pattern.fullmatch(value):
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.{field} has an invalid value.")
+
+    return value
+
+
+def parse_schedule_check(name: str, raw: object, *, enabled: bool, ) -> ScheduleCheckState:
+    if raw is None:
+        raw = {}
+
+    if not isinstance(raw, dict):
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check must be a mapping.")
+
+    container_name = str(raw.get("container_name", "") or "").strip()
+    windows_host = str(raw.get("windows_host", "") or "").strip()
+    windows_user = str(raw.get("windows_user", "") or "").strip()
+    ssh_identity = str(raw.get("ssh_identity", "") or "").strip()
+    windows_process = str(raw.get("windows_process", "MAA") or "").strip()
+    windows_executable = str(raw.get("windows_executable", "") or "").strip()
+    windows_start_task = str(raw.get("windows_start_task", "") or "").strip()
+
+    if container_name and not CONTAINER_NAME_RE.fullmatch(container_name):
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.container_name has an invalid value.")
+
+    if enabled:
+        windows_host = _validated_schedule_check_value(
+            windows_host,
+            name=name,
+            field="windows_host",
+            pattern=WINDOWS_HOST_RE,
+        )
+        windows_user = _validated_schedule_check_value(
+            windows_user,
+            name=name,
+            field="windows_user",
+            pattern=WINDOWS_USER_RE,
+        )
+        ssh_identity = _validated_schedule_check_value(
+            ssh_identity,
+            name=name,
+            field="ssh_identity",
+        )
+        windows_process = _validated_schedule_check_value(
+            windows_process,
+            name=name,
+            field="windows_process",
+            pattern=WINDOWS_PROCESS_RE,
+        )
+
+    if windows_executable and not WINDOWS_EXECUTABLE_RE.fullmatch(windows_executable):
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.windows_executable must be an absolute Windows path.")
+
+    if windows_start_task and not WINDOWS_TASK_RE.fullmatch(windows_start_task):
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.windows_start_task has an invalid value.")
+
+    return ScheduleCheckState(
+        container_name=container_name,
+        windows_host=windows_host,
+        windows_user=windows_user,
+        ssh_identity=ssh_identity,
+        windows_process=windows_process,
+        windows_executable=windows_executable,
+        windows_start_task=windows_start_task,
+    )
+
+
 def ensure_unique_slugs(names: Iterable[object]) -> None:
     seen: dict[str, str] = {}
 
@@ -127,11 +224,17 @@ def parse_profile(name: str, raw: object) -> ProfileState:
     raw_schedule = raw.get("schedule")
 
     if raw_schedule is None:
-        schedule = ScheduleState(enabled=False, times=[])
+        schedule = ScheduleState(run_enabled=False, check_enabled=False, times=[])
 
     elif isinstance(raw_schedule, dict):
-        if "enable" in raw_schedule and "enabled" not in raw_schedule:
-            raise ValueError(f"{PROFILES_PATH}: {name}.schedule uses 'enable'; use 'enabled' instead.")
+        if "enable" in raw_schedule:
+            raise ValueError(f"{PROFILES_PATH}: {name}.schedule uses 'enable'; use 'run_enabled' instead.")
+
+        if "enabled" in raw_schedule and ("run_enabled" in raw_schedule or "check_enabled" in raw_schedule):
+            raise ValueError(
+                f"{PROFILES_PATH}: {name}.schedule cannot mix legacy 'enabled' with "
+                "'run_enabled' or 'check_enabled'."
+            )
 
         raw_times = raw_schedule.get("times") or []
 
@@ -139,8 +242,29 @@ def parse_profile(name: str, raw: object) -> ProfileState:
             raise ValueError(f"{PROFILES_PATH}: {name}.schedule.times must be a list.")
 
         times = normalize_times(raw_times)
-        enabled = bool(raw_schedule.get("enabled", False)) if times else False
-        schedule = ScheduleState(enabled=enabled, times=times)
+
+        if "enabled" in raw_schedule:
+            raw_run_enabled = raw_schedule.get("enabled", False)
+            raw_check_enabled = False
+        else:
+            raw_run_enabled = raw_schedule.get("run_enabled", False)
+            raw_check_enabled = raw_schedule.get("check_enabled", False)
+
+        if type(raw_run_enabled) is not bool:
+            raise ValueError(f"{PROFILES_PATH}: {name}.schedule.run_enabled must be true or false.")
+
+        if type(raw_check_enabled) is not bool:
+            raise ValueError(f"{PROFILES_PATH}: {name}.schedule.check_enabled must be true or false.")
+
+        run_enabled = raw_run_enabled if times else False
+        check_enabled = raw_check_enabled if times else False
+
+        if run_enabled and check_enabled:
+            raise ValueError(
+                f"{PROFILES_PATH}: {name}.schedule.run_enabled and check_enabled cannot both be true."
+            )
+
+        schedule = ScheduleState(run_enabled=run_enabled, check_enabled=check_enabled, times=times)
 
     else:
         raise ValueError(f"{PROFILES_PATH}: {name}.schedule must be a mapping.")
@@ -176,11 +300,13 @@ def parse_profile(name: str, raw: object) -> ProfileState:
         raise ValueError(f"{PROFILES_PATH}: {name}.log must be OFF, ON, or FULL.")
 
     language = normalize_language(raw.get("lang", "en"))
+    schedule_check = parse_schedule_check(name, raw.get("schedule_check"), enabled=schedule.check_enabled, )
 
     return ProfileState(
         chat_id=chat_id,
         admin=raw_admin,
         schedule=schedule,
+        schedule_check=schedule_check,
         alert=alert,
         log=log_mode,
         lang=language,
@@ -246,9 +372,11 @@ def save_profiles(profiles: dict[str, ProfileState]) -> None:
             "chat_id": chat_id,
             "admin": bool(profile.admin),
             "schedule": {
-                "enabled": bool(profile.schedule.enabled) if times else False,
+                "run_enabled": bool(profile.schedule.run_enabled) if times else False,
+                "check_enabled": bool(profile.schedule.check_enabled) if times else False,
                 "times": [_QuotedTime(value) for value in times],
             },
+            "schedule_check": asdict(profile.schedule_check),
             "alert": {
                 "enabled": bool(profile.alert.enabled),
                 "hours": validate_alert_hours(profile.alert.hours),
@@ -300,7 +428,8 @@ def set_schedule(
         name: str,
         *,
         times: Iterable[object] | None = None,
-        enabled: bool | None = None,
+        run_enabled: bool | None = None,
+        check_enabled: bool | None = None,
 ) -> ScheduleState:
     name = validate_name(name)
     profiles = load_profiles()
@@ -312,17 +441,57 @@ def set_schedule(
     new_times = profile.schedule.times if times is None else normalize_times(times)
 
     if not new_times:
-        new_enabled = False
-    elif enabled is None:
-        new_enabled = profile.schedule.enabled
+        new_run_enabled = False
+        new_check_enabled = False
     else:
-        new_enabled = bool(enabled)
+        new_run_enabled = profile.schedule.run_enabled if run_enabled is None else bool(run_enabled)
+        new_check_enabled = profile.schedule.check_enabled if check_enabled is None else bool(check_enabled)
 
-    profile.schedule = ScheduleState(enabled=new_enabled, times=new_times)
+    if new_run_enabled and new_check_enabled:
+        raise ValueError(f"{name} run schedule and repeating check cannot both be enabled.")
+
+    if new_check_enabled:
+        parse_schedule_check(name, asdict(profile.schedule_check), enabled=True)
+
+    profile.schedule = ScheduleState(
+        run_enabled=new_run_enabled,
+        check_enabled=new_check_enabled,
+        times=new_times,
+    )
     profiles[name] = profile
     save_profiles(profiles)
 
     return profile.schedule
+
+
+def set_schedule_check(name: str, state: ScheduleCheckState) -> ScheduleCheckState:
+    name = validate_name(name)
+    profiles = load_profiles()
+
+    if name not in profiles:
+        raise ValueError(f"Unknown profile: {name}")
+
+    validated = parse_schedule_check(name, asdict(state), enabled=profiles[name].schedule.check_enabled)
+    profiles[name].schedule_check = validated
+    save_profiles(profiles)
+
+    return validated
+
+
+def validate_schedule_check(name: str, state: ScheduleCheckState) -> ScheduleCheckState:
+    return parse_schedule_check(validate_name(name), asdict(state), enabled=True)
+
+
+def validate_windows_app_control(name: str, state: ScheduleCheckState) -> ScheduleCheckState:
+    validated = validate_schedule_check(name, state)
+
+    if not validated.windows_executable:
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.windows_executable is required for app control.")
+
+    if not validated.windows_start_task:
+        raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.windows_start_task is required for app control.")
+
+    return validated
 
 
 def set_alert_enabled(name: str, enabled: bool) -> AlertState:

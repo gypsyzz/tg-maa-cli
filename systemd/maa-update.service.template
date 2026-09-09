@@ -4,7 +4,7 @@ After=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory="@WORKDIR@"
+WorkingDirectory=@WORKDIR@
 Environment="MAA_BOT_CONFIG=@CONFIG@"
 Environment="PATH=@PATH@"
 ExecStart=@MAA_BIN@ self update

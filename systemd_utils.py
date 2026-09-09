@@ -4,10 +4,13 @@ import asyncio
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from maa_config import PERSISTENT, SYSTEMD_USER_DIR, TIMEZONE, service_unit_for, timer_file_for, timer_unit_for
+from maa_config import (PERSISTENT, SYSTEMD_USER_DIR, TIMEZONE, schedule_check_service_unit_for,
+                        schedule_check_timer_file_for, schedule_check_timer_unit_for, service_unit_for, timer_file_for,
+                        timer_unit_for, )
 from profile_store import ScheduleState, get_profile
 
 SYSTEMD_TIMESTAMP_RE = re.compile(
@@ -90,10 +93,6 @@ async def unit_is_active(unit: str, ) -> bool:
     return result.returncode == 0
 
 
-async def service_result(name: str, ) -> str:
-    return (await systemctl_value(service_unit_for(name), "Result", ) or "n/a")
-
-
 def parse_systemd_timestamp(value: str, ) -> datetime | None:
     match = SYSTEMD_TIMESTAMP_RE.search(value)
 
@@ -137,7 +136,7 @@ async def next_run(name: str, schedule: ScheduleState | None = None, ) -> str:
     if not schedule.times:
         return "none"
 
-    if not schedule.enabled:
+    if not schedule.run_enabled:
         return "off"
 
     value = await systemctl_value(timer_unit_for(name), "NextElapseUSecRealtime", )
@@ -148,16 +147,23 @@ async def next_run(name: str, schedule: ScheduleState | None = None, ) -> str:
     return value
 
 
-def render_timer(name: str, times: Iterable[str], ) -> str:
-    lines = ["[Unit]", f"Description=MAA {name} Schedule", "", "[Timer]", ]
+def _render_timer(name: str, times: Iterable[str], description: str, unit: str) -> str:
+    lines = ["[Unit]", f"Description=MAA {name} {description}", "", "[Timer]", ]
 
     for value in times:
         lines.append(f"OnCalendar=*-*-* {value}:00 {TIMEZONE}")
 
-    lines += [f"Persistent={'true' if PERSISTENT else 'false'}", "AccuracySec=1s", f"Unit={service_unit_for(name)}", "",
-              "[Install]", "WantedBy=timers.target", "", ]
+    lines += [f"Persistent={'true' if PERSISTENT else 'false'}", "AccuracySec=1s", f"Unit={unit}", "", "[Install]", "WantedBy=timers.target", "", ]
 
     return "\n".join(lines)
+
+
+def render_timer(name: str, times: Iterable[str], ) -> str:
+    return _render_timer(name, times, "Schedule", service_unit_for(name))
+
+
+def render_schedule_check_timer(name: str, times: Iterable[str], ) -> str:
+    return _render_timer(name, times, "Repeating Schedule Check", schedule_check_service_unit_for(name))
 
 
 async def daemon_reload() -> None:
@@ -167,43 +173,59 @@ async def daemon_reload() -> None:
         raise RuntimeError(result.stderr or result.stdout or "systemctl daemon-reload failed")
 
 
-async def disable_timer(name: str, ) -> None:
-    timer_unit = timer_unit_for(name)
-    timer_file = timer_file_for(name)
-
+async def _disable_timer(timer_unit: str, timer_file: Path) -> None:
     await run_cmd("systemctl", "--user", "disable", "--now", timer_unit, )
+    timer_file.unlink(missing_ok=True)
+    await daemon_reload()
 
-    if timer_file.exists():
-        timer_file.unlink()
+
+async def disable_timer(name: str, ) -> None:
+    await _disable_timer(timer_unit_for(name), timer_file_for(name))
+
+
+async def disable_schedule_check_timer(name: str, ) -> None:
+    await _disable_timer(schedule_check_timer_unit_for(name), schedule_check_timer_file_for(name))
+
+
+async def _write_and_enable_timer(timer_unit: str, timer_file: Path, content: str, ) -> None:
+    tmp = timer_file.with_suffix(timer_file.suffix + ".tmp")
+
+    tmp.write_text(content, encoding="utf-8", )
+    tmp.replace(timer_file)
 
     await daemon_reload()
+
+    result = await run_cmd("systemctl", "--user", "enable", "--now", timer_unit, )
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or f"Failed enabling {timer_unit}")
+
+    result = await run_cmd("systemctl", "--user", "restart", timer_unit, )
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or f"Failed restarting {timer_unit}")
 
 
 async def sync_timer(name: str, schedule: ScheduleState, ) -> None:
     SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True, )
 
-    if not schedule.times or not schedule.enabled:
+    if not schedule.times or not schedule.run_enabled:
         await disable_timer(name)
-        return
+    else:
+        await _write_and_enable_timer(
+            timer_unit_for(name),
+            timer_file_for(name),
+            render_timer(name, schedule.times, ),
+        )
 
-    timer_file = timer_file_for(name)
-    tmp = timer_file.with_suffix(timer_file.suffix + ".tmp")
-
-    tmp.write_text(render_timer(name, schedule.times, ), encoding="utf-8", )
-
-    tmp.replace(timer_file)
-
-    await daemon_reload()
-
-    result = await run_cmd("systemctl", "--user", "enable", "--now", timer_unit_for(name), )
-
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout or f"Failed enabling {timer_unit_for(name)}")
-
-    result = await run_cmd("systemctl", "--user", "restart", timer_unit_for(name), )
-
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout or f"Failed restarting {timer_unit_for(name)}")
+    if not schedule.times or not schedule.check_enabled:
+        await disable_schedule_check_timer(name)
+    else:
+        await _write_and_enable_timer(
+            schedule_check_timer_unit_for(name),
+            schedule_check_timer_file_for(name),
+            render_schedule_check_timer(name, schedule.times, ),
+        )
 
 
 async def invocation_log(invocation_id: str, ) -> str:

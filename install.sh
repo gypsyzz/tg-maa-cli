@@ -38,25 +38,17 @@ if [[ "$NEEDS_EDIT" -eq 1 ]]; then
     exit 1
 fi
 
-# Python selection:
-# 1) explicit PYTHON=...
-# 2) currently active venv
-# 3) repo-local .venv (create if needed)
-if [[ -n "${PYTHON:-}" ]]; then
-    PYTHON_BIN="$PYTHON"
-elif [[ -n "${VIRTUAL_ENV:-}" && -x "$VIRTUAL_ENV/bin/python" ]]; then
-    PYTHON_BIN="$VIRTUAL_ENV/bin/python"
-else
-    VENV="$ROOT/.venv"
+# Always install project dependencies into the repo-local virtual environment.
+# PYTHON can select the bootstrap interpreter, but never replaces the local venv.
+VENV="$ROOT/.venv"
+BOOTSTRAP_PYTHON="${PYTHON:-python3}"
 
-    if [[ ! -x "$VENV/bin/python" ]]; then
-        echo "Creating virtual environment: $VENV"
-        python3 -m venv "$VENV"
-    fi
-
-    PYTHON_BIN="$VENV/bin/python"
+if [[ ! -x "$VENV/bin/python" ]]; then
+    echo "Creating virtual environment: $VENV"
+    "$BOOTSTRAP_PYTHON" -m venv "$VENV"
 fi
 
+PYTHON_BIN="$VENV/bin/python"
 "$PYTHON_BIN" -m pip install -r "$ROOT/requirements.txt"
 
 # Validate configuration and get configured profile names + optional MAA path.
@@ -158,6 +150,35 @@ Path(output).write_text(text, encoding="utf-8")
 PY
 }
 
+render_schedule_check_unit() {
+    local name="$1"
+    local slug="${name,,}"
+
+    "$PYTHON_BIN" - \
+        "$ROOT/systemd/maa-schedule-check.service.template" \
+        "$SYSTEMD_USER_DIR/maa-$slug-schedule-check.service" \
+        "$name" \
+        "$ROOT" \
+        "$PYTHON_BIN" \
+        "$CONFIG" \
+        "$PATH" <<'PY'
+import sys
+from pathlib import Path
+
+template, output, name, root, python, config, path = sys.argv[1:]
+text = Path(template).read_text(encoding="utf-8")
+text = (
+    text
+    .replace("@NAME@", name)
+    .replace("@WORKDIR@", root)
+    .replace("@PYTHON@", python)
+    .replace("@CONFIG@", config)
+    .replace("@PATH@", path)
+)
+Path(output).write_text(text, encoding="utf-8")
+PY
+}
+
 render_update_unit() {
     "$PYTHON_BIN" - \
         "$ROOT/systemd/maa-update.service.template" \
@@ -206,14 +227,20 @@ if [[ -f "$MANAGED_FILE" ]]; then
             slug="${old_name,,}"
 
             systemctl --user disable --now \
-                "maa-$slug.timer" 2>/dev/null || true
+                "maa-$slug.timer" \
+                "maa-$slug-schedule-check.timer" \
+                2>/dev/null || true
 
             systemctl --user stop \
-                "maa-$slug.service" 2>/dev/null || true
+                "maa-$slug.service" \
+                "maa-$slug-schedule-check.service" \
+                2>/dev/null || true
 
             rm -f \
                 "$SYSTEMD_USER_DIR/maa-$slug.timer" \
-                "$SYSTEMD_USER_DIR/maa-$slug.service"
+                "$SYSTEMD_USER_DIR/maa-$slug.service" \
+                "$SYSTEMD_USER_DIR/maa-$slug-schedule-check.timer" \
+                "$SYSTEMD_USER_DIR/maa-$slug-schedule-check.service"
         fi
     done < "$MANAGED_FILE"
 fi
@@ -221,6 +248,7 @@ render_bot_unit
 
 for name in "${NAMES[@]}"; do
     render_profile_unit "$name"
+    render_schedule_check_unit "$name"
 done
 
 printf '%s\n' "${NAMES[@]}" > "$MANAGED_FILE"
@@ -234,6 +262,7 @@ UPDATE_TIMER_TEMPLATE="$ROOT/systemd/maa-update.timer.template"
 
 UPDATE_SERVICE="$SYSTEMD_USER_DIR/maa-update.service"
 UPDATE_TIMER="$SYSTEMD_USER_DIR/maa-update.timer"
+UPDATE_TIMER_PREVIOUS_STATE="$(systemctl --user is-enabled maa-update.timer 2>/dev/null || true)"
 
 if [[ ! -f "$UPDATE_SERVICE_TEMPLATE" ]]; then
     echo "Missing systemd template: $UPDATE_SERVICE_TEMPLATE" >&2
@@ -264,6 +293,7 @@ systemctl --user daemon-reload
     "$ROOT/maa_config.py" \
     "$ROOT/i18n.py" \
     "$ROOT/profile_store.py" \
+    "$ROOT/schedule_health_checker.py" \
     "$ROOT/systemd_utils.py" \
     "$ROOT/task_store.py" \
     "$ROOT/telegram_ui.py"
@@ -273,7 +303,13 @@ MAA_BOT_CONFIG="$CONFIG" \
 "$PYTHON_BIN" "$ROOT/maa_control.py" --sync-profiles
 
 systemctl --user enable --now maa-telegram-bot.service
-systemctl --user enable --now maa-update.timer
+
+if [[ "$UPDATE_TIMER_PREVIOUS_STATE" == "disabled" ]]; then
+    systemctl --user disable --now maa-update.timer 2>/dev/null || true
+    echo "Preserved disabled MAA self-update timer."
+else
+    systemctl --user enable --now maa-update.timer
+fi
 
 echo
 echo "Installed:"
@@ -284,6 +320,7 @@ echo "  Update timer: maa-update.timer"
 for name in "${NAMES[@]}"; do
     slug="${name,,}"
     echo "  $name worker: maa-$slug.service -> maa run $slug -p $slug"
+    echo "  $name schedule check: maa-$slug-schedule-check.service"
 done
 
 echo

@@ -2,9 +2,20 @@ from __future__ import annotations
 
 import copy
 import json
+import unicodedata
+from collections.abc import Iterable
+from difflib import get_close_matches
 from pathlib import Path
 
 from maa_config import task_file_for
+
+
+FIGHT_TEMPLATE_PATH = Path(__file__).with_name("templates") / "fight.json"
+DASH_EQUIVALENTS = frozenset({"\u2212"})
+DEFAULT_STAGE_RESOURCE_ROOTS = (
+    Path.home() / ".local/share/maa/resource",
+    Path.home() / ".local/share/maa/MaaResource/resource",
+)
 
 
 def load_task_json(name: str, ) -> tuple[Path, dict]:
@@ -111,13 +122,122 @@ def fight_sequence(data: dict, ) -> str:
 
 
 def fight_entries(data: dict, ) -> list[tuple[int, dict]]:
-    entries: list[tuple[int, dict]] = []
+    return [(index, task) for index, task in enumerate(data["tasks"]) if isinstance(task, dict) and task_type(task) == "Fight"]
 
-    for index, task in enumerate(data["tasks"]):
-        if (isinstance(task, dict) and task_type(task) == "Fight"):
-            entries.append((index, task))
 
-    return entries
+def load_fight_template() -> dict:
+    try:
+        template = json.loads(FIGHT_TEMPLATE_PATH.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"Fight template not found: {FIGHT_TEMPLATE_PATH}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid Fight template in {FIGHT_TEMPLATE_PATH}: {exc}") from exc
+
+    if not isinstance(template, dict) or task_type(template) != "Fight":
+        raise ValueError(f"{FIGHT_TEMPLATE_PATH} must contain a Fight task object.")
+
+    if not isinstance(template.get("params"), dict):
+        raise ValueError(f"The Fight template in {FIGHT_TEMPLATE_PATH} has no valid params object.")
+
+    return template
+
+
+def automatic_fight_insert_index(data: dict, ) -> int:
+    tasks = data["tasks"]
+
+    for index in range(len(tasks) - 1, -1, -1):
+        if task_type(tasks[index]) == "StartUp":
+            return index + 1
+
+    raise ValueError("No StartUp task is available for automatic Fight placement. "
+                     "Specify an overall task position.")
+
+
+def canonical_stage_names(resource_roots: Iterable[Path] | None = None, ) -> set[str]:
+    names: set[str] = set()
+    roots = DEFAULT_STAGE_RESOURCE_ROOTS if resource_roots is None else tuple(resource_roots)
+
+    for root in roots:
+        stages_path = root / "stages.json"
+
+        try:
+            stages = json.loads(stages_path.read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            stages = []
+
+        if isinstance(stages, list):
+            for entry in stages:
+                if isinstance(entry, dict) and isinstance(entry.get("code"), str) and entry["code"]:
+                    names.add(entry["code"])
+
+        navigation_dir = root / "tasks/Stages"
+
+        if not navigation_dir.is_dir():
+            continue
+
+        for path in navigation_dir.rglob("*.json"):
+            try:
+                navigation = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+
+            if not isinstance(navigation, dict):
+                continue
+
+            names.update(name for name in navigation if isinstance(name, str) and name and "@" not in name)
+
+    return names
+
+
+def canonicalize_stage_case(
+        stage: str,
+        resource_roots: Iterable[Path] | None = None,
+        *,
+        strict: bool = True,
+) -> str:
+    names = canonical_stage_names(resource_roots)
+
+    if not names:
+        return stage
+
+    if stage in names:
+        return stage
+
+    matches = {name for name in names if name.casefold() == stage.casefold()}
+
+    if len(matches) == 1:
+        return next(iter(matches))
+
+    if not strict:
+        return stage
+
+    if matches:
+        choices = ", ".join(repr(name) for name in sorted(matches))
+        raise ValueError(f"Fight stage {stage!r} is ambiguous; use the exact case of one of: {choices}.")
+
+    folded_names: dict[str, set[str]] = {}
+
+    for name in names:
+        folded_names.setdefault(name.casefold(), set()).add(name)
+
+    close_folded = get_close_matches(stage.casefold(), sorted(folded_names), n=5, cutoff=0.6)
+    suggestions = [name for folded in close_folded for name in sorted(folded_names[folded])]
+    suggestion_text = (f" Did you mean: {', '.join(repr(name) for name in suggestions)}?" if suggestions else "")
+
+    raise ValueError(f"Unknown Fight stage {stage!r}.{suggestion_text}")
+
+
+def normalize_fight_stage(stage: str, *, strict: bool = True, ) -> str:
+    normalized = unicodedata.normalize("NFKC", stage.strip())
+    normalized = "".join(
+        "-" if unicodedata.category(character) == "Pd" or character in DASH_EQUIVALENTS else character
+        for character in normalized
+    )
+
+    if "-" not in normalized and normalized.casefold().startswith("anni"):
+        return "Annihilation"
+
+    return canonicalize_stage_case(normalized, strict=strict)
 
 
 def parse_fight_add_args(values: list[str], ) -> tuple[str, int | None]:
@@ -135,44 +255,36 @@ def parse_fight_add_args(values: list[str], ) -> tuple[str, int | None]:
         else:
             stage_tokens = values[:-1]
 
-    stage = " ".join(stage_tokens).strip()
+    stage = normalize_fight_stage(" ".join(stage_tokens))
 
     if not stage:
         raise ValueError("Stage name cannot be empty.")
 
-    if (position is not None and position < 0):
-        raise ValueError("Fight position cannot be negative.")
+    if (position is not None and position < 1):
+        raise ValueError("Overall task position must be 1 or greater.")
 
     return stage, position
 
 
-def add_fight_task(data: dict, stage: str, position: int | None, ) -> tuple[int, int]:
+def add_fight_task(data: dict, stage: str, position: int | None, ) -> int:
     """
-    Position is Fight-relative:
+    Position is an optional 1-based overall task index:
 
-      0       -> before all existing Fight tasks
-      1       -> after the first Fight
-      2       -> after the second Fight
-      omitted -> after the last Fight
+      1       -> insert as the first overall task
+      5       -> insert as the fifth overall task
+      omitted -> immediately after the final StartUp task
     """
     fights = fight_entries(data)
 
-    if not fights:
-        raise ValueError("No existing Fight task is available " "to use as the template.")
-
     for _, task in fights:
-        if fight_stage(task) == stage:
+        if normalize_fight_stage(fight_stage(task), strict=False) == stage:
             raise ValueError(f"Fight stage {stage!r} already exists.")
 
-    fight_count = len(fights)
+    if position is not None and position > len(data["tasks"]) + 1:
+        raise ValueError(f"Overall task position {position} is out of range. "
+                         f"Valid positions are 1 to {len(data['tasks']) + 1}.")
 
-    if position is None:
-        position = fight_count
-
-    if position > fight_count:
-        raise ValueError(f"Fight position {position} is out of range. " f"Valid positions are 0 to {fight_count}.")
-
-    template = copy.deepcopy(fights[-1][1])
+    template = (copy.deepcopy(fights[-1][1]) if fights else load_fight_template())
 
     params = template.get("params")
 
@@ -182,14 +294,14 @@ def add_fight_task(data: dict, stage: str, position: int | None, ) -> tuple[int,
     params["stage"] = stage
     template["name"] = stage
 
-    if position == fight_count:
-        insert_at = (fights[-1][0] + 1)
+    if position is not None:
+        insert_at = position - 1
     else:
-        insert_at = fights[position][0]
+        insert_at = automatic_fight_insert_index(data)
 
     data["tasks"].insert(insert_at, template, )
 
-    return insert_at + 1, position
+    return insert_at + 1
 
 
 def remove_fight_task(data: dict, task_index: int, ) -> str:

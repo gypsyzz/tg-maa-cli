@@ -1,0 +1,13 @@
+{
+  "type": "Fight",
+  "params": {
+    "stage": "",
+    "medicine": 0,
+    "medicine_expire_days": 0,
+    "stone": 0,
+    "series": 0,
+    "report_to_penguin": false,
+    "report_to_yituliu": false,
+    "DrGrandet": false
+  }
+}

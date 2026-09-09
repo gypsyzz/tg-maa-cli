@@ -87,9 +87,10 @@ class SudoCommandTests(IsolatedAsyncioTestCase):
         update.effective_message.reply_text.assert_awaited_once()
         self.assertIn("does not allow", update.effective_message.reply_text.await_args.args[0])
 
-    async def test_schedule_run_and_stop_are_allowed(self) -> None:
+    async def test_other_allowed_commands_are_delegated(self) -> None:
         for command, delegated_args, handler_name in (
                 ("schedule", ["off"], "schedule_command"),
+                ("winmaa", ["app", "on"], "winmaa_command"),
                 ("run", [], "run_command"),
                 ("stop", [], "stop_command"),
         ):

@@ -2,12 +2,21 @@ profile_a:
   chat_id:
   admin: false
   schedule:
-    enabled: false
+    run_enabled: false
+    check_enabled: false
     times:
       - "00:33"
       - "06:33"
       - "14:33"
       - "17:33"
+  schedule_check:
+    container_name: ""
+    windows_host: ""
+    windows_user: ""
+    ssh_identity: ""
+    windows_process: "MAA"
+    windows_executable: ""
+    windows_start_task: ""
   alert:
     enabled: false
     hours: 24
@@ -18,10 +27,19 @@ profile_b:
   chat_id:
   admin: false
   schedule:
-    enabled: false
+    run_enabled: false
+    check_enabled: true
     times:
       - "02:00"
       - "16:10"
+  schedule_check:
+    container_name: "redroid-profile-b"
+    windows_host: "192.168.1.125"
+    windows_user: "windows_user"
+    ssh_identity: "~/.ssh/id_windows"
+    windows_process: "MAA"
+    windows_executable: 'C:\Users\windows_user\Documents\MAA\MAA.exe'
+    windows_start_task: "MAA Telegram profile_b"
   alert:
     enabled: false
     hours: 24

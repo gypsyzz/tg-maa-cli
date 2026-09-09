@@ -75,14 +75,15 @@ async def cli_sync_profiles() -> None:
 
         if not schedule.times:
             schedule_text = "no schedule"
-        elif schedule.enabled:
+        elif schedule.run_enabled:
             schedule_text = ("schedule ON: " + ", ".join(schedule.times))
         else:
             schedule_text = ("schedule OFF: " + ", ".join(schedule.times))
 
         alert_text = (("ON" if profile.alert.enabled else "OFF") + f"/{profile.alert.hours}h")
+        check_text = ("ON" if schedule.check_enabled else "OFF")
 
-        print(f"{name}: {schedule_text}; " f"alert={alert_text}; " f"log={profile.log}; " f"lang={profile.lang}")
+        print(f"{name}: {schedule_text}; " f"check={check_text}; " f"alert={alert_text}; " f"log={profile.log}; " f"lang={profile.lang}")
 
 
 async def cli_check_alerts() -> None:

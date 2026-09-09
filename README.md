@@ -24,8 +24,10 @@ profile_store.py     profiles.yaml 读写和聊天授权
 i18n.py              英文 / 中文界面翻译
 systemd_utils.py     用户级 Service / Timer / Journal 辅助功能
 task_store.py        任务 JSON 和 Fight 编辑
+templates/fight.json 无已有 Fight 任务时使用的只读安全模板
 log_monitor.py       基于 MaaCore TaskChain 回调的实时日志监控
 alert_checker.py     复用 MAA updater 的单次未运行提醒检查
+schedule_health_checker.py  按 Profile 定时检查本机容器和 Windows MAA
 maa_config.py        路径和全局配置
 
 install.sh           初次安装 / 更新 systemd 配置
@@ -35,6 +37,7 @@ systemd/
   maa-telegram-bot.service.template
   maa-profile.service.template
   maa-profile.timer.template
+  maa-schedule-check.service.template
   maa-update.service.template
   maa-update.timer.template
 
@@ -64,12 +67,21 @@ profile_a:
   chat_id:
   admin: false
   schedule:
-    enabled: false
+    run_enabled: false
+    check_enabled: false
     times:
       - "00:33"
       - "06:33"
       - "14:33"
       - "17:33"
+  schedule_check:
+    container_name: ""
+    windows_host: ""
+    windows_user: ""
+    ssh_identity: ""
+    windows_process: "MAA"
+    windows_executable: ""
+    windows_start_task: ""
   alert:
     enabled: false
     hours: 24
@@ -80,10 +92,19 @@ profile_b:
   chat_id:
   admin: false
   schedule:
-    enabled: false
+    run_enabled: false
+    check_enabled: true
     times:
       - "02:00"
       - "16:10"
+  schedule_check:
+    container_name: "redroid-profile-b"
+    windows_host: "192.168.1.125"
+    windows_user: "windows_user"
+    ssh_identity: "~/.ssh/id_windows"
+    windows_process: "MAA"
+    windows_executable: 'C:\Users\windows_user\Documents\MAA\MAA.exe'
+    windows_start_task: "MAA Telegram profile_b"
   alert:
     enabled: false
     hours: 24
@@ -98,40 +119,37 @@ profile_b:
 `alert` 保存每个 Profile 的游戏未运行提醒设置。`hours` 只接受正整数小时，默认 24。
 提醒记录保存在 `~/.config/maa-tg-bot/alert_state.yaml`，同一次上次操作只会提醒一次。
 
+`schedule_check` 创建独立于 MAA 自动运行的重复检查 Timer，但复用该 Profile 的
+`schedule.times`。`schedule.run_enabled` 和 `schedule.check_enabled` 互斥，不能同时开启；
+因此可以关闭前者、开启后者，只在同一组时间检查 Windows 上的 `MAA.exe` 是否打开，
+并在 `container_name` 非空时检查该本机 Docker 容器是否正在运行。留空会跳过容器检查。
+检查失败时，每次 Timer 触发都会提醒；后续定时时间会重新检查，不使用跨次去重。
+
+Telegram 使用 `/winmaa` 查看 systemd Timer、本机容器和 Windows MAA 的实时状态。
+`/winmaa check` 立即检查已配置的容器和 Windows MAA；
+`/winmaa monitor` 查看检查 Timer 状态，`/winmaa monitor on|off` 控制重复检查；
+`/winmaa app` 查看 Windows MAA 状态，`/winmaa app on|off` 通过 Windows 的交互式
+Scheduled Task 启动 MAA，或只停止 `windows_executable` 指定的 MAA。
+
+`windows_start_task` 必须是 Windows 上已经建立的任务名称，任务应设置为“仅当用户登录时
+运行”，以便 MAA GUI 出现在当前桌面。SSH 服务会话直接启动 GUI 时，进程可能出现在不可见
+的服务会话中，因此 `/winmaa app on` 只触发该交互式任务。
+
+Windows 检查使用批处理 SSH 公钥认证，密钥不能要求交互输入。
+
 将私聊 Profile 设置为 `admin: true` 后，该 Profile 可以代表其他 Profile 执行受限命令：
 
 ```text
 /sudo lun fight add 1-7
 /sudo lun schedule add 12:00
+/sudo lun winmaa app on
 /sudo lun run
 /sudo lun stop
 ```
 
-委托命令仅允许 `fight`、`schedule`、`run` 和 `stop`。管理员校验同时要求消息的 Telegram
+委托命令仅允许 `fight`、`schedule`、`winmaa`、`run` 和 `stop`；`winmaa` 的子命令和参数会原样转发。管理员校验同时要求消息的 Telegram
 `user_id` 与管理员 Profile 的 `chat_id` 完全相同，因此群聊 Profile 即使误设 `admin: true`
 也无法取得管理员权限。
-
-### 从旧版本迁移
-
-旧版本使用 `authorized_chats.yaml` 保存 `Profile 名称 -> chat_id`。升级后，请将每个
-非空的 `chat_id` 手动复制到 `profiles.yaml` 中名称相同的 Profile 下：
-
-```yaml
-profile_a:
-  chat_id: # 在这里填写 authorized_chats.yaml 中 profile_a 的真实整数值
-  schedule:
-    enabled: false
-    times: []
-  alert:
-    enabled: false
-    hours: 24
-  log: "OFF"
-  lang: "en"
-```
-
-每个 Profile 名称（忽略大小写后）和每个 `chat_id` 都必须唯一。完成迁移并确认安装
-成功后，旧的 `authorized_chats.yaml` 不再被程序读取，可以自行归档或删除。
-
 
 ## 2. MAA Profile / Task
 
@@ -175,11 +193,13 @@ Profile JSON 可以从 `default.json` 复制，然后只修改每个 Profile 对
 .venv
 ```
 
-如果需要强制使用指定的 Python：
+如果需要指定用于创建项目虚拟环境的基础 Python：
 
 ```bash
-PYTHON=/home/ubuntu/Documents/.venv/bin/python ./install.sh
+PYTHON=/usr/bin/python3 ./install.sh
 ```
+
+无论当前是否已激活其他虚拟环境，依赖和 systemd Service 都只使用本项目的 `.venv`。
 
 安装脚本支持重复执行。
 
@@ -243,11 +263,17 @@ OnCalendar=hourly
 /fight
 /log
 /alert
+/winmaa
 /lang
 /run
 /stop
 /help
 ```
+
+`/fight add` 会静默将全角或其他 Unicode 横线规范为 ASCII `-`。不含横线的关卡名只要以
+`anni` 开头（忽略大小写），就会规范为 `Annihilation`。关卡名还会与已安装 MAA 资源中的
+关卡代码及导航名称进行不区分大小写的匹配：唯一匹配会自动改为标准大小写；未知名称会给出
+相近建议；多个仅大小写不同的匹配会要求用户明确填写标准名称。
 
 自动日志模式：
 
@@ -306,6 +332,8 @@ systemctl --user list-timers 'maa-*.timer' --all
 maa-telegram-bot.service
 maa-<profile>.service
 maa-<profile>.timer
+maa-<profile>-schedule-check.service
+maa-<profile>-schedule-check.timer
 maa-update.service
 maa-update.timer
 ```

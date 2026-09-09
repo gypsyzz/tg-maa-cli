@@ -5,7 +5,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory="@WORKDIR@"
+WorkingDirectory=@WORKDIR@
 ExecStart="@PYTHON@" "@WORKDIR@/maa_control.py"
 Environment="PYTHONUNBUFFERED=1"
 Environment="PATH=@PATH@"

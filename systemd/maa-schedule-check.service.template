@@ -1,0 +1,11 @@
+[Unit]
+Description=MAA repeating schedule check for @NAME@
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@WORKDIR@
+Environment="MAA_BOT_CONFIG=@CONFIG@"
+Environment="PATH=@PATH@"
+ExecStart="@PYTHON@" "@WORKDIR@/schedule_health_checker.py" --profile @NAME@

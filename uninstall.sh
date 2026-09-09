@@ -31,15 +31,19 @@ if [[ -f "$MANAGED_FILE" ]]; then
 
         systemctl --user disable --now \
             "maa-$slug.timer" \
+            "maa-$slug-schedule-check.timer" \
             2>/dev/null || true
 
         systemctl --user stop \
             "maa-$slug.service" \
+            "maa-$slug-schedule-check.service" \
             2>/dev/null || true
 
         rm -f \
             "$SYSTEMD_USER_DIR/maa-$slug.timer" \
-            "$SYSTEMD_USER_DIR/maa-$slug.service"
+            "$SYSTEMD_USER_DIR/maa-$slug.service" \
+            "$SYSTEMD_USER_DIR/maa-$slug-schedule-check.timer" \
+            "$SYSTEMD_USER_DIR/maa-$slug-schedule-check.service"
 
     done < "$MANAGED_FILE"
 fi

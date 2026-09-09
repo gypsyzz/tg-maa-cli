@@ -7,20 +7,20 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
 from telegram.ext import Application
 
-from i18n import mode_text, result_text, text_for
+from i18n import mode_text, text_for
 from maa_config import TIMEZONE, service_unit_for
 from profile_store import get_profile
-from systemd_utils import next_run, service_result, unit_is_active
+from systemd_utils import next_run, unit_is_active
 
 PREFORMATTED_TEXT_LIMIT = 3400
 
 
 def html_pre(text: str) -> str:
-    return (f"<pre>{html.escape(text)}</pre>")
+    return f"<pre>{html.escape(text)}</pre>"
 
 
 def html_code(text: str) -> str:
-    return (f"<code>{html.escape(text)}</code>")
+    return f"<code>{html.escape(text)}</code>"
 
 
 def html_code_lines(lines: Iterable[str], ) -> str:
@@ -136,7 +136,7 @@ async def control_keyboard(name: str, ) -> InlineKeyboardMarkup:
 
     # Row 4: schedule ON/OFF
     if profile.schedule.times:
-        if profile.schedule.enabled:
+        if profile.schedule.run_enabled:
             rows.append([InlineKeyboardButton(text_for(lang, "button_schedule_off", ), callback_data="maa:schedule_off", )])
         else:
             rows.append([InlineKeyboardButton(text_for(lang, "button_schedule_on", ), callback_data="maa:schedule_on", )])
@@ -145,34 +145,14 @@ async def control_keyboard(name: str, ) -> InlineKeyboardMarkup:
 
 
 async def status_text(name: str, ) -> str:
-    running = await unit_is_active(service_unit_for(name))
     profile = get_profile(name)
     schedule = profile.schedule
     lang = profile.lang
 
-    run_state = (text_for(lang, "state_on") if running else text_for(lang, "state_off"))
+    run_schedule_state = text_for(lang, "state_on" if schedule.run_enabled else "state_off", )
+    check_schedule_state = text_for(lang, "state_on" if schedule.check_enabled else "state_off", )
 
-    if not schedule.times:
-        schedule_state = text_for(lang, "state_off", )
-        next_line = ""
-
-    elif schedule.enabled:
-        schedule_state = text_for(lang, "state_on", )
-        next_line = ("\n" + text_for(lang, "next_run_label") + ": " + await next_run(name, schedule))
-
-    else:
-        count = len(schedule.times)
-
-        if lang == "zh":
-            schedule_state = text_for(lang, "schedule_saved", count=count, plural="", )
-        else:
-            schedule_state = text_for(lang, "schedule_saved", count=count, plural=("s" if count != 1 else ""), )
-
-        next_line = ""
-
-    last_result = result_text(lang, await service_result(name), )
-
-    return (f"🤖 MAA {name}\n\n" f"{text_for(lang, 'run_label')}: {run_state}\n" f"{text_for(lang, 'schedule_label')}: " f"{schedule_state}" f"{next_line}\n" f"{text_for(lang, 'last_result_label')}: " f"{last_result}")
+    return (f"🤖 MAA {name}\n\n" f"{text_for(lang, 'run_schedule_label')}: {run_schedule_state}\n" f"{text_for(lang, 'check_schedule_label')}: {check_schedule_state}")
 
 
 async def schedule_text(name: str, ) -> str:
@@ -183,7 +163,7 @@ async def schedule_text(name: str, ) -> str:
     if schedule.times:
         rows = "\n".join(f"• {value}" for value in schedule.times)
 
-        if schedule.enabled:
+        if schedule.run_enabled:
             body = (f"{text_for(lang, 'state_label')}: " f"{text_for(lang, 'state_on')}\n" f"{text_for(lang, 'timezone_label')}: " f"{TIMEZONE}\n\n" f"{rows}\n\n" f"{text_for(lang, 'next_run_label')}: " f"{await next_run(name, schedule)}")
         else:
             body = (f"{text_for(lang, 'state_label')}: " f"{text_for(lang, 'state_off')}\n" f"{text_for(lang, 'timezone_label')}: " f"{TIMEZONE}\n\n" f"{rows}")
