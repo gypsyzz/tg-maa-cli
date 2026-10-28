@@ -1,0 +1,9 @@
+# Formatting only. Matches the workspace convention: PyCharm-style layout with a 300-character line limit.
+line-length = 300
+target-version = "py312"
+
+[format]
+skip-magic-trailing-comma = true
+
+[lint.isort]
+split-on-trailing-comma = false

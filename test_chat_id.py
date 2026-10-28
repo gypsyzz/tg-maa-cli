@@ -1,4 +1,5 @@
 """Offline regression checks: .venv/bin/python test_chat_id.py"""
+
 from __future__ import annotations
 
 import asyncio
@@ -20,12 +21,7 @@ async def main() -> None:
 
         application = SimpleNamespace(add_handler=Mock())
         handlers.register_handlers(application)
-        commands = {
-            command: call.args[0].callback
-            for call in application.add_handler.call_args_list
-            if isinstance(call.args[0], CommandHandler)
-            for command in call.args[0].commands
-        }
+        commands = {command: call.args[0].callback for call in application.add_handler.call_args_list if isinstance(call.args[0], CommandHandler) for command in call.args[0].commands}
         assert commands["chat_id"] is handlers.chat_id_command
         assert commands["start"] is commands["status"] is handlers.start_command
         for language in ("en", "zh"):
@@ -34,10 +30,12 @@ async def main() -> None:
         context = SimpleNamespace(user_data={})
         message = SimpleNamespace(reply_text=AsyncMock())
         update = SimpleNamespace(effective_chat=None, effective_message=message, effective_user=SimpleNamespace(id=999), callback_query=None)
-        with patch.object(handlers, "get_profile_by_chat_id", side_effect=AssertionError("Unexpected profile lookup")), \
-                patch.object(handlers, "get_profile", side_effect=AssertionError("Unexpected profile lookup")), \
-                patch.object(handlers, "status_text", new=AsyncMock(side_effect=AssertionError("Unexpected status lookup"))), \
-                patch.object(handlers, "control_keyboard", new=AsyncMock(side_effect=AssertionError("Unexpected control panel"))):
+        with (
+            patch.object(handlers, "get_profile_by_chat_id", side_effect=AssertionError("Unexpected profile lookup")),
+            patch.object(handlers, "get_profile", side_effect=AssertionError("Unexpected profile lookup")),
+            patch.object(handlers, "status_text", new=AsyncMock(side_effect=AssertionError("Unexpected status lookup"))),
+            patch.object(handlers, "control_keyboard", new=AsyncMock(side_effect=AssertionError("Unexpected control panel"))),
+        ):
             for chat_id in (123456789, -1001234567890):
                 update.effective_chat = SimpleNamespace(id=chat_id)
                 message.reply_text.reset_mock()
@@ -55,9 +53,7 @@ async def main() -> None:
         update.effective_chat = SimpleNamespace(id=123456789)
         update.effective_message = message
         keyboard = object()
-        with patch.object(handlers, "get_profile_by_chat_id") as profile_lookup, \
-                patch.object(handlers, "status_text", new=AsyncMock(return_value="Existing panel")), \
-                patch.object(handlers, "control_keyboard", new=AsyncMock(return_value=keyboard)):
+        with patch.object(handlers, "get_profile_by_chat_id") as profile_lookup, patch.object(handlers, "status_text", new=AsyncMock(return_value="Existing panel")), patch.object(handlers, "control_keyboard", new=AsyncMock(return_value=keyboard)):
             for command in ("start", "status"):
                 profile_lookup.return_value = None
                 message.reply_text.reset_mock()

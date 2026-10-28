@@ -112,13 +112,7 @@ def parse_alert_hours(value: object) -> int:
     return validate_alert_hours(int(raw))
 
 
-def _validated_schedule_check_value(
-        raw: object,
-        *,
-        name: str,
-        field: str,
-        pattern: re.Pattern[str] | None = None,
-) -> str:
+def _validated_schedule_check_value(raw: object, *, name: str, field: str, pattern: re.Pattern[str] | None = None) -> str:
     value = str(raw or "").strip()
 
     if not value:
@@ -130,7 +124,7 @@ def _validated_schedule_check_value(
     return value
 
 
-def parse_schedule_check(name: str, raw: object, *, enabled: bool, ) -> ScheduleCheckState:
+def parse_schedule_check(name: str, raw: object, *, enabled: bool) -> ScheduleCheckState:
     if raw is None:
         raw = {}
 
@@ -149,29 +143,10 @@ def parse_schedule_check(name: str, raw: object, *, enabled: bool, ) -> Schedule
         raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.container_name has an invalid value.")
 
     if enabled:
-        windows_host = _validated_schedule_check_value(
-            windows_host,
-            name=name,
-            field="windows_host",
-            pattern=WINDOWS_HOST_RE,
-        )
-        windows_user = _validated_schedule_check_value(
-            windows_user,
-            name=name,
-            field="windows_user",
-            pattern=WINDOWS_USER_RE,
-        )
-        ssh_identity = _validated_schedule_check_value(
-            ssh_identity,
-            name=name,
-            field="ssh_identity",
-        )
-        windows_process = _validated_schedule_check_value(
-            windows_process,
-            name=name,
-            field="windows_process",
-            pattern=WINDOWS_PROCESS_RE,
-        )
+        windows_host = _validated_schedule_check_value(windows_host, name=name, field="windows_host", pattern=WINDOWS_HOST_RE)
+        windows_user = _validated_schedule_check_value(windows_user, name=name, field="windows_user", pattern=WINDOWS_USER_RE)
+        ssh_identity = _validated_schedule_check_value(ssh_identity, name=name, field="ssh_identity")
+        windows_process = _validated_schedule_check_value(windows_process, name=name, field="windows_process", pattern=WINDOWS_PROCESS_RE)
 
     if windows_executable and not WINDOWS_EXECUTABLE_RE.fullmatch(windows_executable):
         raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.windows_executable must be an absolute Windows path.")
@@ -179,15 +154,7 @@ def parse_schedule_check(name: str, raw: object, *, enabled: bool, ) -> Schedule
     if windows_start_task and not WINDOWS_TASK_RE.fullmatch(windows_start_task):
         raise ValueError(f"{PROFILES_PATH}: {name}.schedule_check.windows_start_task has an invalid value.")
 
-    return ScheduleCheckState(
-        container_name=container_name,
-        windows_host=windows_host,
-        windows_user=windows_user,
-        ssh_identity=ssh_identity,
-        windows_process=windows_process,
-        windows_executable=windows_executable,
-        windows_start_task=windows_start_task,
-    )
+    return ScheduleCheckState(container_name=container_name, windows_host=windows_host, windows_user=windows_user, ssh_identity=ssh_identity, windows_process=windows_process, windows_executable=windows_executable, windows_start_task=windows_start_task)
 
 
 def ensure_unique_slugs(names: Iterable[object]) -> None:
@@ -199,10 +166,7 @@ def ensure_unique_slugs(names: Iterable[object]) -> None:
         existing_name = seen.get(slug)
 
         if existing_name is not None:
-            raise ValueError(
-                f"{PROFILES_PATH}: profile names {existing_name!r} and {name!r} "
-                f"produce the same slug {slug!r}."
-            )
+            raise ValueError(f"{PROFILES_PATH}: profile names {existing_name!r} and {name!r} produce the same slug {slug!r}.")
 
         seen[slug] = name
 
@@ -231,10 +195,7 @@ def parse_profile(name: str, raw: object) -> ProfileState:
             raise ValueError(f"{PROFILES_PATH}: {name}.schedule uses 'enable'; use 'run_enabled' instead.")
 
         if "enabled" in raw_schedule and ("run_enabled" in raw_schedule or "check_enabled" in raw_schedule):
-            raise ValueError(
-                f"{PROFILES_PATH}: {name}.schedule cannot mix legacy 'enabled' with "
-                "'run_enabled' or 'check_enabled'."
-            )
+            raise ValueError(f"{PROFILES_PATH}: {name}.schedule cannot mix legacy 'enabled' with 'run_enabled' or 'check_enabled'.")
 
         raw_times = raw_schedule.get("times") or []
 
@@ -260,9 +221,7 @@ def parse_profile(name: str, raw: object) -> ProfileState:
         check_enabled = raw_check_enabled if times else False
 
         if run_enabled and check_enabled:
-            raise ValueError(
-                f"{PROFILES_PATH}: {name}.schedule.run_enabled and check_enabled cannot both be true."
-            )
+            raise ValueError(f"{PROFILES_PATH}: {name}.schedule.run_enabled and check_enabled cannot both be true.")
 
         schedule = ScheduleState(run_enabled=run_enabled, check_enabled=check_enabled, times=times)
 
@@ -272,7 +231,7 @@ def parse_profile(name: str, raw: object) -> ProfileState:
     raw_alert = raw.get("alert")
 
     if raw_alert is None:
-        alert = AlertState(enabled=False, hours=DEFAULT_ALERT_HOURS, )
+        alert = AlertState(enabled=False, hours=DEFAULT_ALERT_HOURS)
 
     elif isinstance(raw_alert, dict):
         raw_enabled = raw_alert.get("enabled", False)
@@ -280,10 +239,7 @@ def parse_profile(name: str, raw: object) -> ProfileState:
         if type(raw_enabled) is not bool:
             raise ValueError(f"{PROFILES_PATH}: {name}.alert.enabled must be true or false.")
 
-        alert = AlertState(
-            enabled=raw_enabled,
-            hours=validate_alert_hours(raw_alert.get("hours", DEFAULT_ALERT_HOURS)),
-        )
+        alert = AlertState(enabled=raw_enabled, hours=validate_alert_hours(raw_alert.get("hours", DEFAULT_ALERT_HOURS)))
 
     else:
         raise ValueError(f"{PROFILES_PATH}: {name}.alert must be a mapping.")
@@ -300,17 +256,9 @@ def parse_profile(name: str, raw: object) -> ProfileState:
         raise ValueError(f"{PROFILES_PATH}: {name}.log must be OFF, ON, or FULL.")
 
     language = normalize_language(raw.get("lang", "en"))
-    schedule_check = parse_schedule_check(name, raw.get("schedule_check"), enabled=schedule.check_enabled, )
+    schedule_check = parse_schedule_check(name, raw.get("schedule_check"), enabled=schedule.check_enabled)
 
-    return ProfileState(
-        chat_id=chat_id,
-        admin=raw_admin,
-        schedule=schedule,
-        schedule_check=schedule_check,
-        alert=alert,
-        log=log_mode,
-        lang=language,
-    )
+    return ProfileState(chat_id=chat_id, admin=raw_admin, schedule=schedule, schedule_check=schedule_check, alert=alert, log=log_mode, lang=language)
 
 
 def load_profiles() -> dict[str, ProfileState]:
@@ -338,9 +286,7 @@ def load_profiles() -> dict[str, ProfileState]:
         existing_name = chat_ids.get(profile.chat_id)
 
         if existing_name is not None:
-            raise ValueError(
-                f"{PROFILES_PATH}: duplicate chat_id {profile.chat_id} used by {existing_name!r} and {name!r}."
-            )
+            raise ValueError(f"{PROFILES_PATH}: duplicate chat_id {profile.chat_id} used by {existing_name!r} and {name!r}.")
 
         chat_ids[profile.chat_id] = name
         profiles[name] = profile
@@ -361,9 +307,7 @@ def save_profiles(profiles: dict[str, ProfileState]) -> None:
         existing_name = chat_ids.get(chat_id)
 
         if existing_name is not None:
-            raise ValueError(
-                f"{PROFILES_PATH}: duplicate chat_id {chat_id} used by {existing_name!r} and {name!r}."
-            )
+            raise ValueError(f"{PROFILES_PATH}: duplicate chat_id {chat_id} used by {existing_name!r} and {name!r}.")
 
         chat_ids[chat_id] = name
         times = normalize_times(profile.schedule.times)
@@ -371,16 +315,9 @@ def save_profiles(profiles: dict[str, ProfileState]) -> None:
         data[name] = {
             "chat_id": chat_id,
             "admin": bool(profile.admin),
-            "schedule": {
-                "run_enabled": bool(profile.schedule.run_enabled) if times else False,
-                "check_enabled": bool(profile.schedule.check_enabled) if times else False,
-                "times": [_QuotedTime(value) for value in times],
-            },
+            "schedule": {"run_enabled": bool(profile.schedule.run_enabled) if times else False, "check_enabled": bool(profile.schedule.check_enabled) if times else False, "times": [_QuotedTime(value) for value in times]},
             "schedule_check": asdict(profile.schedule_check),
-            "alert": {
-                "enabled": bool(profile.alert.enabled),
-                "hours": validate_alert_hours(profile.alert.hours),
-            },
+            "alert": {"enabled": bool(profile.alert.enabled), "hours": validate_alert_hours(profile.alert.hours)},
             "log": profile.log.upper(),
             "lang": normalize_language(profile.lang),
         }
@@ -424,13 +361,7 @@ def resolve_profile_name(value: object) -> str:
     raise ValueError(f"Unknown profile: {value}")
 
 
-def set_schedule(
-        name: str,
-        *,
-        times: Iterable[object] | None = None,
-        run_enabled: bool | None = None,
-        check_enabled: bool | None = None,
-) -> ScheduleState:
+def set_schedule(name: str, *, times: Iterable[object] | None = None, run_enabled: bool | None = None, check_enabled: bool | None = None) -> ScheduleState:
     name = validate_name(name)
     profiles = load_profiles()
 
@@ -453,11 +384,7 @@ def set_schedule(
     if new_check_enabled:
         parse_schedule_check(name, asdict(profile.schedule_check), enabled=True)
 
-    profile.schedule = ScheduleState(
-        run_enabled=new_run_enabled,
-        check_enabled=new_check_enabled,
-        times=new_times,
-    )
+    profile.schedule = ScheduleState(run_enabled=new_run_enabled, check_enabled=new_check_enabled, times=new_times)
     profiles[name] = profile
     save_profiles(profiles)
 

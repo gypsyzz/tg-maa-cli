@@ -13,8 +13,8 @@ from profile_store import ProfileState, load_profiles
 from systemd_utils import service_last_action, unit_is_active
 
 
-def load_alert_state(path: Path | None = None, ) -> dict[str, str]:
-    path = (path or ALERT_STATE_PATH)
+def load_alert_state(path: Path | None = None) -> dict[str, str]:
+    path = path or ALERT_STATE_PATH
 
     if not path.exists():
         return {}
@@ -22,15 +22,14 @@ def load_alert_state(path: Path | None = None, ) -> dict[str, str]:
     with path.open(encoding="utf-8") as file:
         raw = yaml.safe_load(file) or {}
 
-    if not isinstance(raw, dict) or any(not isinstance(name, str) or not isinstance(action, str)
-                                        for name, action in raw.items()):
+    if not isinstance(raw, dict) or any(not isinstance(name, str) or not isinstance(action, str) for name, action in raw.items()):
         raise ValueError(f"{path} must map profile names to action timestamps.")
 
     return dict(raw)
 
 
-def save_alert_state(state: dict[str, str], path: Path | None = None, ) -> None:
-    path = (path or ALERT_STATE_PATH)
+def save_alert_state(state: dict[str, str], path: Path | None = None) -> None:
+    path = path or ALERT_STATE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -38,15 +37,7 @@ def save_alert_state(state: dict[str, str], path: Path | None = None, ) -> None:
     tmp.replace(path)
 
 
-async def check_profile_alert(
-        bot: Bot,
-        name: str,
-        profile: ProfileState,
-        state: dict[str, str],
-        *,
-        now: datetime | None = None,
-        state_path: Path | None = None,
-) -> bool:
+async def check_profile_alert(bot: Bot, name: str, profile: ProfileState, state: dict[str, str], *, now: datetime | None = None, state_path: Path | None = None) -> bool:
     if not profile.alert.enabled or await unit_is_active(service_unit_for(name)):
         return False
 
@@ -55,15 +46,12 @@ async def check_profile_alert(
     if action is None or state.get(name) == action.key:
         return False
 
-    current_time = (now or datetime.now(timezone.utc))
+    current_time = now or datetime.now(timezone.utc)
 
     if current_time - action.timestamp < timedelta(hours=profile.alert.hours):
         return False
 
-    await bot.send_message(
-        chat_id=profile.chat_id,
-        text=text_for(profile.lang, "alert_due", threshold=profile.alert.hours, ),
-    )
+    await bot.send_message(chat_id=profile.chat_id, text=text_for(profile.lang, "alert_due", threshold=profile.alert.hours))
 
     state[name] = action.key
     save_alert_state(state, state_path)
@@ -71,7 +59,7 @@ async def check_profile_alert(
     return True
 
 
-async def check_all_alerts(bot: Bot, *, now: datetime | None = None, state_path: Path | None = None, ) -> None:
+async def check_all_alerts(bot: Bot, *, now: datetime | None = None, state_path: Path | None = None) -> None:
     state = load_alert_state(state_path)
 
     for name, profile in load_profiles().items():

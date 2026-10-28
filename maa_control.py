@@ -18,25 +18,20 @@ from systemd_utils import sync_timer
 
 async def sync_all_timers() -> None:
     for name, profile in load_profiles().items():
-        await sync_timer(name, profile.schedule, )
+        await sync_timer(name, profile.schedule)
 
 
-async def set_command_menus(application: Application, ) -> None:
+async def set_command_menus(application: Application) -> None:
     # English fallback for any client that does not match a
     # per-chat scope.
-    await application.bot.set_my_commands(
-        bot_commands("en")
-    )
+    await application.bot.set_my_commands(bot_commands("en"))
 
     # Each authorized profile/chat gets its own localized menu.
     for profile in load_profiles().values():
-        await application.bot.set_my_commands(
-            bot_commands(profile.lang),
-            scope=BotCommandScopeChat(profile.chat_id),
-        )
+        await application.bot.set_my_commands(bot_commands(profile.lang), scope=BotCommandScopeChat(profile.chat_id))
 
 
-async def post_init(application: Application, ) -> None:
+async def post_init(application: Application) -> None:
     ensure_profiles_file()
     await sync_all_timers()
     await set_command_menus(application)
@@ -44,7 +39,7 @@ async def post_init(application: Application, ) -> None:
     application.bot_data["log_monitor_task"] = asyncio.create_task(log_monitor_loop(application))
 
 
-async def post_stop(application: Application, ) -> None:
+async def post_stop(application: Application) -> None:
     task = application.bot_data.get("log_monitor_task")
 
     if task is None:
@@ -59,7 +54,7 @@ async def post_stop(application: Application, ) -> None:
 
 
 def build_application() -> Application:
-    application = (ApplicationBuilder().token(TOKEN).post_init(post_init).post_stop(post_stop).build())
+    application = ApplicationBuilder().token(TOKEN).post_init(post_init).post_stop(post_stop).build()
 
     register_handlers(application)
 
@@ -76,14 +71,14 @@ async def cli_sync_profiles() -> None:
         if not schedule.times:
             schedule_text = "no schedule"
         elif schedule.run_enabled:
-            schedule_text = ("schedule ON: " + ", ".join(schedule.times))
+            schedule_text = "schedule ON: " + ", ".join(schedule.times)
         else:
-            schedule_text = ("schedule OFF: " + ", ".join(schedule.times))
+            schedule_text = "schedule OFF: " + ", ".join(schedule.times)
 
-        alert_text = (("ON" if profile.alert.enabled else "OFF") + f"/{profile.alert.hours}h")
-        check_text = ("ON" if schedule.check_enabled else "OFF")
+        alert_text = ("ON" if profile.alert.enabled else "OFF") + f"/{profile.alert.hours}h"
+        check_text = "ON" if schedule.check_enabled else "OFF"
 
-        print(f"{name}: {schedule_text}; " f"check={check_text}; " f"alert={alert_text}; " f"log={profile.log}; " f"lang={profile.lang}")
+        print(f"{name}: {schedule_text}; check={check_text}; alert={alert_text}; log={profile.log}; lang={profile.lang}")
 
 
 async def cli_check_alerts() -> None:
@@ -92,13 +87,11 @@ async def cli_check_alerts() -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=("Telegram controller for " "per-chat MAA profiles"))
+    parser = argparse.ArgumentParser(description=("Telegram controller for per-chat MAA profiles"))
 
     actions = parser.add_mutually_exclusive_group()
-    actions.add_argument("--sync-profiles", action="store_true",
-                         help=("sync profiles.yaml schedules " "into user systemd timers and exit"), )
-    actions.add_argument("--check-alerts", action="store_true",
-                         help="check enabled inactivity alerts once and exit", )
+    actions.add_argument("--sync-profiles", action="store_true", help=("sync profiles.yaml schedules into user systemd timers and exit"))
+    actions.add_argument("--check-alerts", action="store_true", help="check enabled inactivity alerts once and exit")
 
     args = parser.parse_args()
 

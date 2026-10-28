@@ -8,14 +8,10 @@ from pathlib import Path
 from typing import Iterable
 from zoneinfo import ZoneInfo
 
-from maa_config import (PERSISTENT, SYSTEMD_USER_DIR, TIMEZONE, schedule_check_service_unit_for,
-                        schedule_check_timer_file_for, schedule_check_timer_unit_for, service_unit_for, timer_file_for,
-                        timer_unit_for, )
+from maa_config import PERSISTENT, SYSTEMD_USER_DIR, TIMEZONE, schedule_check_service_unit_for, schedule_check_timer_file_for, schedule_check_timer_unit_for, service_unit_for, timer_file_for, timer_unit_for
 from profile_store import ScheduleState, get_profile
 
-SYSTEMD_TIMESTAMP_RE = re.compile(
-    r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\s+(?P<zone>[+-]\d{2}(?::?\d{2})?|UTC))?"
-)
+SYSTEMD_TIMESTAMP_RE = re.compile(r"(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?:\s+(?P<zone>[+-]\d{2}(?::?\d{2})?|UTC))?")
 
 
 @dataclass
@@ -31,28 +27,26 @@ class ServiceAction:
     timestamp: datetime
 
 
-async def run_cmd(*args: str, timeout: float = 20, ) -> CmdResult:
+async def run_cmd(*args: str, timeout: float = 20) -> CmdResult:
     try:
-        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE,
-                                                    stderr=asyncio.subprocess.PIPE, )
+        proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
 
-        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout, )
+        stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
 
     except asyncio.TimeoutError:
         proc.kill()
         await proc.communicate()
 
-        return CmdResult(124, "", f"Timed out: {' '.join(args)}", )
+        return CmdResult(124, "", f"Timed out: {' '.join(args)}")
 
     except FileNotFoundError as exc:
-        return CmdResult(127, "", str(exc), )
+        return CmdResult(127, "", str(exc))
 
-    return CmdResult(proc.returncode, stdout_b.decode(errors="replace").strip(),
-                     stderr_b.decode(errors="replace").strip(), )
+    return CmdResult(proc.returncode, stdout_b.decode(errors="replace").strip(), stderr_b.decode(errors="replace").strip())
 
 
-async def systemctl_value(unit: str, prop: str, ) -> str:
-    result = await run_cmd("systemctl", "--user", "show", unit, f"--property={prop}", "--value", )
+async def systemctl_value(unit: str, prop: str) -> str:
+    result = await run_cmd("systemctl", "--user", "show", unit, f"--property={prop}", "--value")
 
     if result.returncode != 0:
         return ""
@@ -60,18 +54,11 @@ async def systemctl_value(unit: str, prop: str, ) -> str:
     return result.stdout.strip()
 
 
-async def systemctl_properties(unit: str, *properties: str, ) -> dict[str, str]:
+async def systemctl_properties(unit: str, *properties: str) -> dict[str, str]:
     if not properties:
         return {}
 
-    result = await run_cmd(
-        "systemctl",
-        "--user",
-        "show",
-        unit,
-        f"--property={','.join(properties)}",
-        "--no-pager",
-    )
+    result = await run_cmd("systemctl", "--user", "show", unit, f"--property={','.join(properties)}", "--no-pager")
 
     if result.returncode != 0:
         return {}
@@ -87,13 +74,13 @@ async def systemctl_properties(unit: str, *properties: str, ) -> dict[str, str]:
     return values
 
 
-async def unit_is_active(unit: str, ) -> bool:
-    result = await run_cmd("systemctl", "--user", "is-active", "--quiet", unit, )
+async def unit_is_active(unit: str) -> bool:
+    result = await run_cmd("systemctl", "--user", "is-active", "--quiet", unit)
 
     return result.returncode == 0
 
 
-def parse_systemd_timestamp(value: str, ) -> datetime | None:
+def parse_systemd_timestamp(value: str) -> datetime | None:
     match = SYSTEMD_TIMESTAMP_RE.search(value)
 
     if match is None:
@@ -109,10 +96,10 @@ def parse_systemd_timestamp(value: str, ) -> datetime | None:
     if raw_zone == "UTC":
         source_zone = timezone.utc
     elif raw_zone:
-        sign = (1 if raw_zone[0] == "+" else -1)
+        sign = 1 if raw_zone[0] == "+" else -1
         digits = raw_zone[1:].replace(":", "")
         hours = int(digits[:2])
-        minutes = (int(digits[2:]) if len(digits) > 2 else 0)
+        minutes = int(digits[2:]) if len(digits) > 2 else 0
         source_zone = timezone(sign * timedelta(hours=hours, minutes=minutes))
     else:
         source_zone = ZoneInfo(TIMEZONE)
@@ -120,18 +107,18 @@ def parse_systemd_timestamp(value: str, ) -> datetime | None:
     return timestamp.replace(tzinfo=source_zone).astimezone(timezone.utc)
 
 
-async def service_last_action(name: str, ) -> ServiceAction | None:
-    value = await systemctl_value(service_unit_for(name), "ExecMainExitTimestamp", )
+async def service_last_action(name: str) -> ServiceAction | None:
+    value = await systemctl_value(service_unit_for(name), "ExecMainExitTimestamp")
     timestamp = parse_systemd_timestamp(value)
 
     if timestamp is None:
         return None
 
-    return ServiceAction(key=timestamp.isoformat(), timestamp=timestamp, )
+    return ServiceAction(key=timestamp.isoformat(), timestamp=timestamp)
 
 
-async def next_run(name: str, schedule: ScheduleState | None = None, ) -> str:
-    schedule = (schedule or get_profile(name).schedule)
+async def next_run(name: str, schedule: ScheduleState | None = None) -> str:
+    schedule = schedule or get_profile(name).schedule
 
     if not schedule.times:
         return "none"
@@ -139,7 +126,7 @@ async def next_run(name: str, schedule: ScheduleState | None = None, ) -> str:
     if not schedule.run_enabled:
         return "off"
 
-    value = await systemctl_value(timer_unit_for(name), "NextElapseUSecRealtime", )
+    value = await systemctl_value(timer_unit_for(name), "NextElapseUSecRealtime")
 
     if not value or value in {"0", "n/a"}:
         return "n/a"
@@ -148,89 +135,80 @@ async def next_run(name: str, schedule: ScheduleState | None = None, ) -> str:
 
 
 def _render_timer(name: str, times: Iterable[str], description: str, unit: str) -> str:
-    lines = ["[Unit]", f"Description=MAA {name} {description}", "", "[Timer]", ]
+    lines = ["[Unit]", f"Description=MAA {name} {description}", "", "[Timer]"]
 
     for value in times:
         lines.append(f"OnCalendar=*-*-* {value}:00 {TIMEZONE}")
 
-    lines += [f"Persistent={'true' if PERSISTENT else 'false'}", "AccuracySec=1s", f"Unit={unit}", "", "[Install]", "WantedBy=timers.target", "", ]
+    lines += [f"Persistent={'true' if PERSISTENT else 'false'}", "AccuracySec=1s", f"Unit={unit}", "", "[Install]", "WantedBy=timers.target", ""]
 
     return "\n".join(lines)
 
 
-def render_timer(name: str, times: Iterable[str], ) -> str:
+def render_timer(name: str, times: Iterable[str]) -> str:
     return _render_timer(name, times, "Schedule", service_unit_for(name))
 
 
-def render_schedule_check_timer(name: str, times: Iterable[str], ) -> str:
+def render_schedule_check_timer(name: str, times: Iterable[str]) -> str:
     return _render_timer(name, times, "Repeating Schedule Check", schedule_check_service_unit_for(name))
 
 
 async def daemon_reload() -> None:
-    result = await run_cmd("systemctl", "--user", "daemon-reload", )
+    result = await run_cmd("systemctl", "--user", "daemon-reload")
 
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout or "systemctl daemon-reload failed")
 
 
 async def _disable_timer(timer_unit: str, timer_file: Path) -> None:
-    await run_cmd("systemctl", "--user", "disable", "--now", timer_unit, )
+    await run_cmd("systemctl", "--user", "disable", "--now", timer_unit)
     timer_file.unlink(missing_ok=True)
     await daemon_reload()
 
 
-async def disable_timer(name: str, ) -> None:
+async def disable_timer(name: str) -> None:
     await _disable_timer(timer_unit_for(name), timer_file_for(name))
 
 
-async def disable_schedule_check_timer(name: str, ) -> None:
+async def disable_schedule_check_timer(name: str) -> None:
     await _disable_timer(schedule_check_timer_unit_for(name), schedule_check_timer_file_for(name))
 
 
-async def _write_and_enable_timer(timer_unit: str, timer_file: Path, content: str, ) -> None:
+async def _write_and_enable_timer(timer_unit: str, timer_file: Path, content: str) -> None:
     tmp = timer_file.with_suffix(timer_file.suffix + ".tmp")
 
-    tmp.write_text(content, encoding="utf-8", )
+    tmp.write_text(content, encoding="utf-8")
     tmp.replace(timer_file)
 
     await daemon_reload()
 
-    result = await run_cmd("systemctl", "--user", "enable", "--now", timer_unit, )
+    result = await run_cmd("systemctl", "--user", "enable", "--now", timer_unit)
 
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout or f"Failed enabling {timer_unit}")
 
-    result = await run_cmd("systemctl", "--user", "restart", timer_unit, )
+    result = await run_cmd("systemctl", "--user", "restart", timer_unit)
 
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout or f"Failed restarting {timer_unit}")
 
 
-async def sync_timer(name: str, schedule: ScheduleState, ) -> None:
-    SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True, )
+async def sync_timer(name: str, schedule: ScheduleState) -> None:
+    SYSTEMD_USER_DIR.mkdir(parents=True, exist_ok=True)
 
     if not schedule.times or not schedule.run_enabled:
         await disable_timer(name)
     else:
-        await _write_and_enable_timer(
-            timer_unit_for(name),
-            timer_file_for(name),
-            render_timer(name, schedule.times, ),
-        )
+        await _write_and_enable_timer(timer_unit_for(name), timer_file_for(name), render_timer(name, schedule.times))
 
     if not schedule.times or not schedule.check_enabled:
         await disable_schedule_check_timer(name)
     else:
-        await _write_and_enable_timer(
-            schedule_check_timer_unit_for(name),
-            schedule_check_timer_file_for(name),
-            render_schedule_check_timer(name, schedule.times, ),
-        )
+        await _write_and_enable_timer(schedule_check_timer_unit_for(name), schedule_check_timer_file_for(name), render_schedule_check_timer(name, schedule.times))
 
 
-async def invocation_log(invocation_id: str, ) -> str:
-    result = await run_cmd("journalctl", "--user", f"_SYSTEMD_INVOCATION_ID={invocation_id}", "--no-pager", "-o", "cat",
-                           timeout=30, )
+async def invocation_log(invocation_id: str) -> str:
+    result = await run_cmd("journalctl", "--user", f"_SYSTEMD_INVOCATION_ID={invocation_id}", "--no-pager", "-o", "cat", timeout=30)
 
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout or "Failed to read MAA invocation log.")

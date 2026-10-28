@@ -1,4 +1,5 @@
 """Offline regression checks: .venv/bin/python test_container_monitor.py"""
+
 from __future__ import annotations
 
 import asyncio
@@ -27,10 +28,7 @@ async def main() -> None:
         bot = AsyncMock()
         bot.__aenter__.return_value = bot
 
-        with patch.object(checker, "check_container_health", new=AsyncMock()) as health, \
-                patch.object(checker, "Bot", return_value=bot) as bot_type, \
-                patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=AssertionError("Live subprocess"))), \
-                redirect_stdout(io.StringIO()):
+        with patch.object(checker, "check_container_health", new=AsyncMock()) as health, patch.object(checker, "Bot", return_value=bot) as bot_type, patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=AssertionError("Live subprocess"))), redirect_stdout(io.StringIO()):
             health.side_effect = [ok, ok, ok]
             assert await checker.run_container_checks("yan", names, notify=True, state_path=state_path) == 0
             assert [item.args[0].container_name for item in health.await_args_list] == names

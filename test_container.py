@@ -1,4 +1,5 @@
 """Offline regression checks: .venv/bin/python test_container.py"""
+
 from __future__ import annotations
 
 import asyncio
@@ -17,10 +18,8 @@ async def main() -> None:
         config = Path(directory) / "config.yaml"
         config.write_text("TOKEN: offline-test-only\n", encoding="utf-8")
         (Path(directory) / "profiles.yaml").write_text(
-            "ALPHA:\n  chat_id: 1\n  admin: true\n  schedule_check:\n    container_name: redroid-alpha\n"
-            "BETA:\n  chat_id: 2\n  schedule_check:\n    container_name: redroid-beta\n"
-            "EMPTY:\n  chat_id: 3\n"
-            "GROUP:\n  chat_id: -4\n  admin: true\n", encoding="utf-8", )
+            "ALPHA:\n  chat_id: 1\n  admin: true\n  schedule_check:\n    container_name: redroid-alpha\nBETA:\n  chat_id: 2\n  schedule_check:\n    container_name: redroid-beta\nEMPTY:\n  chat_id: 3\nGROUP:\n  chat_id: -4\n  admin: true\n", encoding="utf-8"
+        )
         with patch.dict(os.environ, {"MAA_BOT_CONFIG": str(config)}):
             import handlers
             import schedule_health_checker as checker
@@ -33,9 +32,7 @@ async def main() -> None:
         failure = CmdResult(1, "", "device offline")
         state = get_profile("ALPHA").schedule_check
 
-        with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=AssertionError("Live subprocess"))), \
-                patch.object(checker, "run_cmd", new=AsyncMock()) as run, \
-                patch.object(checker.asyncio, "sleep", new=AsyncMock()):
+        with patch("asyncio.create_subprocess_exec", new=AsyncMock(side_effect=AssertionError("Live subprocess"))), patch.object(checker, "run_cmd", new=AsyncMock()) as run, patch.object(checker.asyncio, "sleep", new=AsyncMock()):
             run.side_effect = [ok, CmdResult(0, "0", ""), booted, ok]
             assert (await checker.restart_container(state)).returncode == 0
             assert run.await_args_list == [
@@ -65,10 +62,7 @@ async def main() -> None:
                 run.side_effect = [CmdResult(0, json.dumps({"running": True, "ports": [{**binding, "HostIp": host}]}), ""), booted, ok, identifier]
                 result = await checker.check_container_health(state)
                 assert result.returncode == 0 and identifier.stdout not in result.stdout
-                assert run.await_args_list[-2:] == [
-                    call("adb", "connect", address, timeout=10),
-                    call("adb", "-s", address, "shell", "settings", "get", "secure", "android_id", timeout=10),
-                ]
+                assert run.await_args_list[-2:] == [call("adb", "connect", address, timeout=10), call("adb", "-s", address, "shell", "settings", "get", "secure", "android_id", timeout=10)]
 
             cases = [
                 ([failure], "device offline"),
@@ -101,8 +95,7 @@ async def main() -> None:
 
         application = SimpleNamespace(add_handler=Mock())
         handlers.register_handlers(application)
-        commands = {command: item.args[0].callback for item in application.add_handler.call_args_list
-                    if isinstance(item.args[0], CommandHandler) for command in item.args[0].commands}
+        commands = {command: item.args[0].callback for item in application.add_handler.call_args_list if isinstance(item.args[0], CommandHandler) for command in item.args[0].commands}
         assert commands["container"] is handlers.container_command
         for language in ("en", "zh"):
             assert "container" in {command.command for command in handlers.bot_commands(language)}
@@ -110,8 +103,7 @@ async def main() -> None:
         message = SimpleNamespace(reply_text=AsyncMock())
         update = SimpleNamespace(effective_chat=SimpleNamespace(id=1), effective_user=SimpleNamespace(id=1), effective_message=message, callback_query=None)
         context = SimpleNamespace(user_data={}, args=[])
-        with patch.object(handlers, "restart_container", new=AsyncMock(return_value=ok)) as restart, \
-                patch.object(handlers, "check_container_health", new=AsyncMock(return_value=ok)) as health:
+        with patch.object(handlers, "restart_container", new=AsyncMock(return_value=ok)) as restart, patch.object(handlers, "check_container_health", new=AsyncMock(return_value=ok)) as health:
             await handlers.help_command(update, context)
             assert "/container health" in message.reply_text.call_args.args[0]
             assert "/container restart" in message.reply_text.call_args.args[0]
@@ -149,9 +141,7 @@ async def main() -> None:
                 assert reply.startswith("❌") and "Timed out" in reply and len(reply) < 4096
                 operation.return_value = ok
 
-        with patch.object(checker, "check_container_health", new=AsyncMock(return_value=failure)) as health, \
-                patch.object(checker, "check_windows_maa", new=AsyncMock(return_value=checker.CheckStatus.OK)), \
-                patch.object(checker, "_log_command_error"):
+        with patch.object(checker, "check_container_health", new=AsyncMock(return_value=failure)) as health, patch.object(checker, "check_windows_maa", new=AsyncMock(return_value=checker.CheckStatus.OK)), patch.object(checker, "_log_command_error"):
             summary = await telegram_ui.status_text("ALPHA")
             assert "redroid-alpha" in summary and "NOT READY" in summary
             summary = await checker.collect_failure_message("ALPHA", get_profile("ALPHA"))
