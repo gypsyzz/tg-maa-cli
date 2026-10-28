@@ -1,0 +1,11 @@
+[Unit]
+Description=Check all Redroid containers and report failures to YAN
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@WORKDIR@
+Environment="MAA_BOT_CONFIG=@CONFIG@"
+Environment="PATH=@PATH@"
+ExecStart="@PYTHON@" "@WORKDIR@/schedule_health_checker.py" --profile YAN --containers redroid13-houdini-1 redroid13-houdini-2 redroid13-houdini-3
+TimeoutStartSec=180

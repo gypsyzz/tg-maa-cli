@@ -10,6 +10,7 @@ from telegram.ext import Application
 from i18n import mode_text, text_for
 from maa_config import TIMEZONE, service_unit_for
 from profile_store import get_profile
+from schedule_health_checker import check_container
 from systemd_utils import next_run, unit_is_active
 
 PREFORMATTED_TEXT_LIMIT = 3400
@@ -152,7 +153,14 @@ async def status_text(name: str, ) -> str:
     run_schedule_state = text_for(lang, "state_on" if schedule.run_enabled else "state_off", )
     check_schedule_state = text_for(lang, "state_on" if schedule.check_enabled else "state_off", )
 
-    return (f"🤖 MAA {name}\n\n" f"{text_for(lang, 'run_schedule_label')}: {run_schedule_state}\n" f"{text_for(lang, 'check_schedule_label')}: {check_schedule_state}")
+    body = (f"🤖 MAA {name}\n\n" f"{text_for(lang, 'run_schedule_label')}: {run_schedule_state}\n" f"{text_for(lang, 'check_schedule_label')}: {check_schedule_state}")
+
+    if profile.schedule_check.container_name:
+        status = await check_container(profile.schedule_check)
+        body += "\n" + text_for(lang, "check_container_status", container_name=profile.schedule_check.container_name,
+                                status=text_for(lang, f"check_container_{status.value}"), )
+
+    return body
 
 
 async def schedule_text(name: str, ) -> str:

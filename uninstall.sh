@@ -67,6 +67,10 @@ rm -f \
     "$SYSTEMD_USER_DIR/maa-update.service" \
     "$SYSTEMD_USER_DIR/maa-update.timer"
 
+systemctl --user disable --now maa-container-health.timer 2>/dev/null || true
+systemctl --user stop maa-container-health.service 2>/dev/null || true
+rm -f "$SYSTEMD_USER_DIR/maa-container-health.service" "$SYSTEMD_USER_DIR/maa-container-health.timer"
+
 
 # ---------------------------------------------------------------------------
 # Remove remaining project-managed files
@@ -94,5 +98,6 @@ echo "Preserved:"
 echo "  telegram_config.yaml"
 echo "  profiles.yaml"
 echo "  ~/.config/maa-tg-bot/alert_state.yaml"
+echo "  ~/.config/maa-tg-bot/container_health_state.yaml"
 echo "  ~/.config/maa/"
 echo "  project files / virtual environment"

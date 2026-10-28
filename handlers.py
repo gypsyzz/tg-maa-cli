@@ -11,8 +11,8 @@ from maa_config import schedule_check_timer_unit_for, service_unit_for
 from profile_store import (get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, parse_alert_hours,
                            resolve_profile_name, set_alert_enabled, set_alert_hours, set_language, set_log_mode,
                            set_schedule, validate_schedule_check, validate_windows_app_control, )
-from schedule_health_checker import (CheckStatus, check_container, check_windows_maa, collect_failure_message,
-                                     start_windows_maa, stop_windows_maa, wait_for_windows_maa, )
+from schedule_health_checker import (CheckStatus, check_container, check_container_health, check_windows_maa, collect_failure_message,
+                                     restart_container, start_windows_maa, stop_windows_maa, wait_for_windows_maa, )
 from systemd_utils import run_cmd, sync_timer, unit_is_active
 from task_store import (add_fight_task, fight_sequence, load_task_json, long_task_sequence, parse_fight_add_args,
                         remove_fight_task, save_task_json, short_task_sequence, )
@@ -76,6 +76,16 @@ async def reply_preformatted(update: Update, name: str, title: str, text: str, )
 
 async def reply_error(update: Update, exc: Exception, ) -> None:
     await update.effective_message.reply_text(f"❌ {exc}")
+
+
+async def chat_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> None:
+    chat = update.effective_chat
+    message = update.effective_message
+
+    if chat is None or message is None:
+        return
+
+    await message.reply_text(f"chat_id: {chat.id}")
 
 
 @auth_required
@@ -409,6 +419,39 @@ async def winmaa_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -
 
 
 @auth_required
+async def container_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> None:
+    profile = get_profile(current_name(context))
+    lang = profile.lang
+
+    if len(context.args) != 1 or context.args[0].casefold() not in {"restart", "health"}:
+        await update.effective_message.reply_text(
+            f"{text_for(lang, 'usage_label')}:\n" + html_code_lines(["/container health", "/container restart"]), parse_mode="HTML", )
+        return
+
+    action = context.args[0].casefold()
+    state = profile.schedule_check
+
+    if not state.container_name:
+        await update.effective_message.reply_text(text_for(lang, "container_not_configured", ))
+        return
+
+    if action == "restart":
+        await update.effective_message.reply_text(text_for(lang, "container_restarting", container_name=state.container_name, ))
+        result = await restart_container(state)
+    else:
+        result = await check_container_health(state)
+
+    if result.returncode != 0:
+        await update.effective_message.reply_text(
+            text_for(lang, f"container_{action}_failed", container_name=state.container_name,
+                     error=(result.stderr or result.stdout or f"exit status {result.returncode}")[:2500], ))
+        return
+
+    await update.effective_message.reply_text(
+        text_for(lang, "container_restarted" if action == "restart" else "container_healthy", container_name=state.container_name, ))
+
+
+@auth_required
 async def task_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> None:
     name = current_name(context)
     lang = current_lang(name)
@@ -679,6 +722,7 @@ async def sudo_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
         "fight": fight_command,
         "schedule": schedule_command,
         "winmaa": winmaa_command,
+        "container": container_command,
         "run": run_command,
         "stop": stop_command,
     }
@@ -728,6 +772,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
             [
                 "/start",
                 "/status",
+                "/chat_id",
                 "/schedule",
                 "/schedule set HH:MM ...",
                 "/schedule add HH:MM ...",
@@ -755,6 +800,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE, ) -> 
                 "/winmaa app",
                 "/winmaa app on",
                 "/winmaa app off",
+                "/container restart",
+                "/container health",
                 "/lang",
                 "/lang en",
                 "/lang zh",
@@ -866,12 +913,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, ) 
 
 def register_handlers(application: Application, ) -> None:
     application.add_handler(CommandHandler(["start", "status"], start_command, ))
+    application.add_handler(CommandHandler("chat_id", chat_id_command, ))
     application.add_handler(CommandHandler("schedule", schedule_command, ))
     application.add_handler(CommandHandler("task", task_command, ))
     application.add_handler(CommandHandler("fight", fight_command, ))
     application.add_handler(CommandHandler("log", log_command, ))
     application.add_handler(CommandHandler("alert", alert_command, ))
     application.add_handler(CommandHandler("winmaa", winmaa_command, ))
+    application.add_handler(CommandHandler("container", container_command, ))
     application.add_handler(CommandHandler("lang", lang_command, ))
     application.add_handler(CommandHandler("run", run_command, ))
     application.add_handler(CommandHandler("stop", stop_command, ))

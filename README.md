@@ -40,6 +40,8 @@ systemd/
   maa-schedule-check.service.template
   maa-update.service.template
   maa-update.timer.template
+  maa-container-health.service.template
+  maa-container-health.timer.template
 
 tools/
   gui2cli.py         将 Windows上的 gui.new.json 转换为 maa-cli 任务 JSON
@@ -59,6 +61,10 @@ cp profiles.yaml.example profiles.yaml
 中为每个 Profile 填写真实的 Telegram `chat_id`。`chat_id` 必须是非零整数：
 私聊通常使用正数，群组或超级群组可以使用负数。空值、布尔值、字符串以及重复
 的 `chat_id` 都会导致配置验证失败。
+
+向正在运行的 Bot 发送 `/chat_id` 即可获取当前聊天 ID，回复格式为 `chat_id: 123456789`。
+此命令无需授权，也可用于尚未配置的聊天；在群组中返回群组 ID，而非发送者的用户 ID。
+`/start` 和 `/status` 仍需授权，并保持原有控制面板行为。
 
 配置静态聊天授权和运行时 Profile 状态保存在 `profiles.yaml`：
 
@@ -122,7 +128,7 @@ profile_b:
 `schedule_check` 创建独立于 MAA 自动运行的重复检查 Timer，但复用该 Profile 的
 `schedule.times`。`schedule.run_enabled` 和 `schedule.check_enabled` 互斥，不能同时开启；
 因此可以关闭前者、开启后者，只在同一组时间检查 Windows 上的 `MAA.exe` 是否打开，
-并在 `container_name` 非空时检查该本机 Docker 容器是否正在运行。留空会跳过容器检查。
+并在 `container_name` 非空时检查该本机 Redroid 容器、Android 和 ADB 是否健康。留空会跳过容器检查。
 检查失败时，每次 Timer 触发都会提醒；后续定时时间会重新检查，不使用跨次去重。
 
 Telegram 使用 `/winmaa` 查看 systemd Timer、本机容器和 Windows MAA 的实时状态。
@@ -137,17 +143,32 @@ Scheduled Task 启动 MAA，或只停止 `windows_executable` 指定的 MAA。
 
 Windows 检查使用批处理 SSH 公钥认证，密钥不能要求交互输入。
 
+使用 `/container restart` 重启当前 Profile 的 `schedule_check.container_name` 指定的本机
+Redroid 容器。命令不接受容器名称参数，不需要配置 Windows SSH 或启用定时检查。
+重启会中断容器内正在进行的任务；Bot 随后等待 Android 启动（约 120 秒超时），并关闭
+蓝牙以避免模拟蓝牙服务崩溃。Docker 重启、启动检查或关闭蓝牙失败时会返回错误。
+Bot 的运行用户需要拥有 Docker 访问权限。
+`/container health` 检查容器运行状态、Android 启动状态，并通过容器 `5555/tcp` 映射的
+本机端口执行 ADB Android ID 读取，避免将 Docker 运行中但 ADB 离线误报为健康。
+检查会先通过 `adb connect` 连接映射的本机地址，再读取 Android ID；即使容器在本机，
+也需要建立 ADB 连接，`adb -s` 只选择设备。检查不会重启容器、断开已有连接或重启 ADB 服务，
+Android ID 不会显示在回复中；主机需安装 `adb`。
+`/status`、`/start` 和状态刷新按钮会显示同一健康检查的结果；`/winmaa`、
+`/winmaa check` 和重复检查 Timer 也使用该检查，不再只判断 Docker 是否运行。
+
 将私聊 Profile 设置为 `admin: true` 后，该 Profile 可以代表其他 Profile 执行受限命令：
 
 ```text
 /sudo lun fight add 1-7
 /sudo lun schedule add 12:00
 /sudo lun winmaa app on
+/sudo lun container restart
+/sudo lun container health
 /sudo lun run
 /sudo lun stop
 ```
 
-委托命令仅允许 `fight`、`schedule`、`winmaa`、`run` 和 `stop`；`winmaa` 的子命令和参数会原样转发。管理员校验同时要求消息的 Telegram
+委托命令仅允许 `fight`、`schedule`、`winmaa`、`container`、`run` 和 `stop`；子命令和参数会原样转发，容器重启只使用目标 Profile 配置的容器名称。管理员校验同时要求消息的 Telegram
 `user_id` 与管理员 Profile 的 `chat_id` 完全相同，因此群聊 Profile 即使误设 `admin: true`
 也无法取得管理员权限。
 
@@ -246,12 +267,34 @@ OnCalendar=hourly
 
 检查一次更新。
 
+### 每小时容器健康提醒
+
+`maa-container-health.timer` 每小时整点独立运行一次，与 MAA updater 和各 Profile 的
+定时任务开关无关。它检查 `redroid13-houdini-1`、`redroid13-houdini-2`、
+`redroid13-houdini-3` 的 Docker、Android 和 ADB 健康状态。
+每个故障容器会单独向 `YAN` Profile 配置的聊天发送原因；全部健康时不发消息。
+同一容器的持续故障只提醒一次；检查到它恢复健康后，再次故障才会重新提醒。
+记录持久化在 `~/.config/maa-tg-bot/container_health_state.yaml`，重启 Bot 或主机不会重复提醒。
+不会自动重启容器；主机恢复后会补跑错过的检查。`--no-notify` 不修改提醒记录。
+
+接收人和容器清单在 `systemd/maa-container-health.service.template` 中指定；安装前需有
+有效的 `YAN` Profile。`install.sh` 安装该 timer，并保留手动禁用状态，`uninstall.sh` 会移除它。
+手动只检查、不发送通知：
+
+```bash
+.venv/bin/python schedule_health_checker.py --profile YAN \
+  --containers redroid13-houdini-1 redroid13-houdini-2 redroid13-houdini-3 --no-notify
+```
+
+任一检查失败时进程返回非零退出码（即使提醒已发送），方便从 systemd 查看故障。
+
 
 ## 4. Telegram 命令
 命令为 /主 <次> <参数> 结构，以维持主命令数量的简洁。次命令会有提示如何使用。
 
 快速开始
 ```text
+/chat_id
 /start
 /status
 ```
@@ -264,6 +307,8 @@ OnCalendar=hourly
 /log
 /alert
 /winmaa
+/container restart
+/container health
 /lang
 /run
 /stop
@@ -336,6 +381,8 @@ maa-<profile>-schedule-check.service
 maa-<profile>-schedule-check.timer
 maa-update.service
 maa-update.timer
+maa-container-health.service
+maa-container-health.timer
 ```
 
 ## 7. 卸载 systemd 配置
@@ -351,6 +398,7 @@ maa-update.timer
 - `telegram_config.yaml`
 - `profiles.yaml`
 - `~/.config/maa-tg-bot/alert_state.yaml`
+- `~/.config/maa-tg-bot/container_health_state.yaml`
 - `~/.config/maa/`
 - maa-cli Task
 - maa-cli Profile

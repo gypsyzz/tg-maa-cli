@@ -74,6 +74,9 @@ from profile_store import ensure_profiles_file, load_profiles
 ensure_profiles_file()
 profiles = load_profiles()
 
+if not any(name.casefold() == "yan" for name in profiles):
+    raise SystemExit("The hourly container health monitor requires a YAN profile in profiles.yaml.")
+
 maa = str(cfg.get("MAA_EXECUTABLE", "")).strip()
 if not maa:
     maa = shutil.which("maa") or ""
@@ -205,6 +208,21 @@ Path(output).write_text(text, encoding="utf-8")
 PY
 }
 
+render_container_health_unit() {
+    "$PYTHON_BIN" - \
+        "$ROOT/systemd/maa-container-health.service.template" \
+        "$SYSTEMD_USER_DIR/maa-container-health.service" \
+        "$ROOT" "$PYTHON_BIN" "$CONFIG" "$PATH" <<'PY'
+import sys
+from pathlib import Path
+
+template, output, root, python, config, path = sys.argv[1:]
+text = Path(template).read_text(encoding="utf-8")
+text = text.replace("@WORKDIR@", root).replace("@PYTHON@", python).replace("@CONFIG@", config).replace("@PATH@", path)
+Path(output).write_text(text, encoding="utf-8")
+PY
+}
+
 # Stop the bot while replacing units/code environment.
 systemctl --user stop maa-telegram-bot.service 2>/dev/null || true
 
@@ -282,6 +300,10 @@ cp \
     "$UPDATE_TIMER_TEMPLATE" \
     "$UPDATE_TIMER"
 
+CONTAINER_HEALTH_TIMER_PREVIOUS_STATE="$(systemctl --user is-enabled maa-container-health.timer 2>/dev/null || true)"
+render_container_health_unit
+cp "$ROOT/systemd/maa-container-health.timer.template" "$SYSTEMD_USER_DIR/maa-container-health.timer"
+
 systemctl --user daemon-reload
 
 # Syntax/import validation before daemon startup.
@@ -311,11 +333,18 @@ else
     systemctl --user enable --now maa-update.timer
 fi
 
+if [[ "$CONTAINER_HEALTH_TIMER_PREVIOUS_STATE" == "disabled" ]]; then
+    systemctl --user disable --now maa-container-health.timer 2>/dev/null || true
+else
+    systemctl --user enable --now maa-container-health.timer
+fi
+
 echo
 echo "Installed:"
 echo "  Telegram bot: maa-telegram-bot.service"
 echo "  Global updater: maa-update.service"
 echo "  Update timer: maa-update.timer"
+echo "  Hourly Redroid health alerts to YAN: maa-container-health.timer"
 
 for name in "${NAMES[@]}"; do
     slug="${name,,}"

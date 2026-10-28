@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Redroid container health hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+Unit=maa-container-health.service
+
+[Install]
+WantedBy=timers.target
