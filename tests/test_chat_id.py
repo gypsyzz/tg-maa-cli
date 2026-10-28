@@ -1,15 +1,18 @@
-"""Offline regression checks: .venv/bin/python test_chat_id.py"""
+"""Offline regression checks: .venv/bin/python tests/test_chat_id.py"""
 
 from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from telegram.ext import CommandHandler
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 async def main() -> None:

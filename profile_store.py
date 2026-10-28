@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass
-from typing import Iterable
+from typing import Callable, Iterable
 
 import yaml
 
@@ -361,48 +361,42 @@ def resolve_profile_name(value: object) -> str:
     raise ValueError(f"Unknown profile: {value}")
 
 
+def _update_profile(name: str, update: Callable[[ProfileState], None]) -> ProfileState:
+    """Load the profiles, apply update() to the named profile and save the file."""
+    name = validate_name(name)
+    profiles = load_profiles()
+
+    if name not in profiles:
+        raise ValueError(f"Unknown profile: {name}")
+
+    update(profiles[name])
+    save_profiles(profiles)
+
+    return profiles[name]
+
+
 def set_schedule(name: str, *, times: Iterable[object] | None = None, run_enabled: bool | None = None, check_enabled: bool | None = None) -> ScheduleState:
     name = validate_name(name)
-    profiles = load_profiles()
 
-    if name not in profiles:
-        raise ValueError(f"Unknown profile: {name}")
+    def update(profile: ProfileState) -> None:
+        new_times = profile.schedule.times if times is None else normalize_times(times)
 
-    profile = profiles[name]
-    new_times = profile.schedule.times if times is None else normalize_times(times)
+        if not new_times:
+            new_run_enabled = False
+            new_check_enabled = False
+        else:
+            new_run_enabled = profile.schedule.run_enabled if run_enabled is None else bool(run_enabled)
+            new_check_enabled = profile.schedule.check_enabled if check_enabled is None else bool(check_enabled)
 
-    if not new_times:
-        new_run_enabled = False
-        new_check_enabled = False
-    else:
-        new_run_enabled = profile.schedule.run_enabled if run_enabled is None else bool(run_enabled)
-        new_check_enabled = profile.schedule.check_enabled if check_enabled is None else bool(check_enabled)
+        if new_run_enabled and new_check_enabled:
+            raise ValueError(f"{name} run schedule and repeating check cannot both be enabled.")
 
-    if new_run_enabled and new_check_enabled:
-        raise ValueError(f"{name} run schedule and repeating check cannot both be enabled.")
+        if new_check_enabled:
+            parse_schedule_check(name, asdict(profile.schedule_check), enabled=True)
 
-    if new_check_enabled:
-        parse_schedule_check(name, asdict(profile.schedule_check), enabled=True)
+        profile.schedule = ScheduleState(run_enabled=new_run_enabled, check_enabled=new_check_enabled, times=new_times)
 
-    profile.schedule = ScheduleState(run_enabled=new_run_enabled, check_enabled=new_check_enabled, times=new_times)
-    profiles[name] = profile
-    save_profiles(profiles)
-
-    return profile.schedule
-
-
-def set_schedule_check(name: str, state: ScheduleCheckState) -> ScheduleCheckState:
-    name = validate_name(name)
-    profiles = load_profiles()
-
-    if name not in profiles:
-        raise ValueError(f"Unknown profile: {name}")
-
-    validated = parse_schedule_check(name, asdict(state), enabled=profiles[name].schedule.check_enabled)
-    profiles[name].schedule_check = validated
-    save_profiles(profiles)
-
-    return validated
+    return _update_profile(name, update).schedule
 
 
 def validate_schedule_check(name: str, state: ScheduleCheckState) -> ScheduleCheckState:
@@ -422,30 +416,19 @@ def validate_windows_app_control(name: str, state: ScheduleCheckState) -> Schedu
 
 
 def set_alert_enabled(name: str, enabled: bool) -> AlertState:
-    name = validate_name(name)
-    profiles = load_profiles()
+    def update(profile: ProfileState) -> None:
+        profile.alert.enabled = bool(enabled)
 
-    if name not in profiles:
-        raise ValueError(f"Unknown profile: {name}")
-
-    profiles[name].alert.enabled = bool(enabled)
-    save_profiles(profiles)
-
-    return profiles[name].alert
+    return _update_profile(name, update).alert
 
 
 def set_alert_hours(name: str, hours: int) -> AlertState:
-    name = validate_name(name)
     hours = validate_alert_hours(hours)
-    profiles = load_profiles()
 
-    if name not in profiles:
-        raise ValueError(f"Unknown profile: {name}")
+    def update(profile: ProfileState) -> None:
+        profile.alert.hours = hours
 
-    profiles[name].alert.hours = hours
-    save_profiles(profiles)
-
-    return profiles[name].alert
+    return _update_profile(name, update).alert
 
 
 def get_log_mode(name: str) -> str:
@@ -453,36 +436,25 @@ def get_log_mode(name: str) -> str:
 
 
 def set_log_mode(name: str, mode: str) -> str:
-    name = validate_name(name)
     mode = mode.upper()
 
     if mode not in LOG_MODES:
         raise ValueError("Log mode must be OFF, ON, or FULL.")
 
-    profiles = load_profiles()
+    def update(profile: ProfileState) -> None:
+        profile.log = mode
 
-    if name not in profiles:
-        raise ValueError(f"Unknown profile: {name}")
-
-    profiles[name].log = mode
-    save_profiles(profiles)
+    _update_profile(name, update)
 
     return mode
 
 
-def get_language(name: str) -> str:
-    return get_profile(name).lang
-
-
 def set_language(name: str, language: str) -> str:
-    name = validate_name(name)
     language = normalize_language(language)
-    profiles = load_profiles()
 
-    if name not in profiles:
-        raise ValueError(f"Unknown profile: {name}")
+    def update(profile: ProfileState) -> None:
+        profile.lang = language
 
-    profiles[name].lang = language
-    save_profiles(profiles)
+    _update_profile(name, update)
 
     return language

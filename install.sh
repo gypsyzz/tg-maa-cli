@@ -104,121 +104,20 @@ NAMES=("${INFO[@]:1}")
 
 mkdir -p "$SYSTEMD_USER_DIR" "$STATE_DIR"
 
-render_bot_unit() {
-    "$PYTHON_BIN" - \
-        "$ROOT/systemd/maa-telegram-bot.service.template" \
-        "$SYSTEMD_USER_DIR/maa-telegram-bot.service" \
-        "$ROOT" \
-        "$PYTHON_BIN" \
-        "$PATH" <<'PY'
+# Render a systemd unit template: render_unit TEMPLATE OUTPUT NAME=value ...
+# Every NAME=value pair replaces the @NAME@ placeholder in the template.
+render_unit() {
+    "$PYTHON_BIN" - "$@" <<'PY'
 import sys
 from pathlib import Path
 
-template, output, root, python, path = sys.argv[1:]
+template, output, *replacements = sys.argv[1:]
 text = Path(template).read_text(encoding="utf-8")
-text = (
-    text
-    .replace("@WORKDIR@", root)
-    .replace("@PYTHON@", python)
-    .replace("@PATH@", path)
-)
-Path(output).write_text(text, encoding="utf-8")
-PY
-}
 
-render_profile_unit() {
-    local name="$1"
-    local slug="${name,,}"
+for replacement in replacements:
+    placeholder, value = replacement.split("=", 1)
+    text = text.replace(f"@{placeholder}@", value)
 
-    "$PYTHON_BIN" - \
-        "$ROOT/systemd/maa-profile.service.template" \
-        "$SYSTEMD_USER_DIR/maa-$slug.service" \
-        "$name" \
-        "$slug" \
-        "$MAA_BIN" \
-        "$PATH" <<'PY'
-import sys
-from pathlib import Path
-
-template, output, name, slug, maa_bin, path = sys.argv[1:]
-text = Path(template).read_text(encoding="utf-8")
-text = (
-    text
-    .replace("@NAME@", name)
-    .replace("@SLUG@", slug)
-    .replace("@MAA_BIN@", maa_bin)
-    .replace("@PATH@", path)
-)
-Path(output).write_text(text, encoding="utf-8")
-PY
-}
-
-render_schedule_check_unit() {
-    local name="$1"
-    local slug="${name,,}"
-
-    "$PYTHON_BIN" - \
-        "$ROOT/systemd/maa-schedule-check.service.template" \
-        "$SYSTEMD_USER_DIR/maa-$slug-schedule-check.service" \
-        "$name" \
-        "$ROOT" \
-        "$PYTHON_BIN" \
-        "$CONFIG" \
-        "$PATH" <<'PY'
-import sys
-from pathlib import Path
-
-template, output, name, root, python, config, path = sys.argv[1:]
-text = Path(template).read_text(encoding="utf-8")
-text = (
-    text
-    .replace("@NAME@", name)
-    .replace("@WORKDIR@", root)
-    .replace("@PYTHON@", python)
-    .replace("@CONFIG@", config)
-    .replace("@PATH@", path)
-)
-Path(output).write_text(text, encoding="utf-8")
-PY
-}
-
-render_update_unit() {
-    "$PYTHON_BIN" - \
-        "$ROOT/systemd/maa-update.service.template" \
-        "$SYSTEMD_USER_DIR/maa-update.service" \
-        "$MAA_BIN" \
-        "$PYTHON_BIN" \
-        "$ROOT" \
-        "$CONFIG" \
-        "$PATH" <<'PY'
-import sys
-from pathlib import Path
-
-template, output, maa_bin, python, root, config, path = sys.argv[1:]
-text = Path(template).read_text(encoding="utf-8")
-text = (
-    text
-    .replace("@MAA_BIN@", maa_bin)
-    .replace("@PYTHON@", python)
-    .replace("@WORKDIR@", root)
-    .replace("@CONFIG@", config)
-    .replace("@PATH@", path)
-)
-Path(output).write_text(text, encoding="utf-8")
-PY
-}
-
-render_container_health_unit() {
-    "$PYTHON_BIN" - \
-        "$ROOT/systemd/maa-container-health.service.template" \
-        "$SYSTEMD_USER_DIR/maa-container-health.service" \
-        "$ROOT" "$PYTHON_BIN" "$CONFIG" "$PATH" <<'PY'
-import sys
-from pathlib import Path
-
-template, output, root, python, config, path = sys.argv[1:]
-text = Path(template).read_text(encoding="utf-8")
-text = text.replace("@WORKDIR@", root).replace("@PYTHON@", python).replace("@CONFIG@", config).replace("@PATH@", path)
 Path(output).write_text(text, encoding="utf-8")
 PY
 }
@@ -262,11 +161,12 @@ if [[ -f "$MANAGED_FILE" ]]; then
         fi
     done < "$MANAGED_FILE"
 fi
-render_bot_unit
+render_unit "$ROOT/systemd/maa-telegram-bot.service.template" "$SYSTEMD_USER_DIR/maa-telegram-bot.service" "WORKDIR=$ROOT" "PYTHON=$PYTHON_BIN" "PATH=$PATH"
 
 for name in "${NAMES[@]}"; do
-    render_profile_unit "$name"
-    render_schedule_check_unit "$name"
+    slug="${name,,}"
+    render_unit "$ROOT/systemd/maa-profile.service.template" "$SYSTEMD_USER_DIR/maa-$slug.service" "NAME=$name" "SLUG=$slug" "MAA_BIN=$MAA_BIN" "PATH=$PATH"
+    render_unit "$ROOT/systemd/maa-schedule-check.service.template" "$SYSTEMD_USER_DIR/maa-$slug-schedule-check.service" "NAME=$name" "WORKDIR=$ROOT" "PYTHON=$PYTHON_BIN" "CONFIG=$CONFIG" "PATH=$PATH"
 done
 
 printf '%s\n' "${NAMES[@]}" > "$MANAGED_FILE"
@@ -294,14 +194,14 @@ fi
 
 echo "Installing global MAA updater..."
 
-render_update_unit
+render_unit "$UPDATE_SERVICE_TEMPLATE" "$UPDATE_SERVICE" "MAA_BIN=$MAA_BIN" "PYTHON=$PYTHON_BIN" "WORKDIR=$ROOT" "CONFIG=$CONFIG" "PATH=$PATH"
 
 cp \
     "$UPDATE_TIMER_TEMPLATE" \
     "$UPDATE_TIMER"
 
 CONTAINER_HEALTH_TIMER_PREVIOUS_STATE="$(systemctl --user is-enabled maa-container-health.timer 2>/dev/null || true)"
-render_container_health_unit
+render_unit "$ROOT/systemd/maa-container-health.service.template" "$SYSTEMD_USER_DIR/maa-container-health.service" "WORKDIR=$ROOT" "PYTHON=$PYTHON_BIN" "CONFIG=$CONFIG" "PATH=$PATH"
 cp "$ROOT/systemd/maa-container-health.timer.template" "$SYSTEMD_USER_DIR/maa-container-health.timer"
 
 systemctl --user daemon-reload

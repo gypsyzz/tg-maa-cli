@@ -36,7 +36,6 @@ uninstall.sh         删除本项目管理的 systemd 单元
 systemd/
   maa-telegram-bot.service.template
   maa-profile.service.template
-  maa-profile.timer.template
   maa-schedule-check.service.template
   maa-update.service.template
   maa-update.timer.template
@@ -45,6 +44,9 @@ systemd/
 
 tools/
   gui2cli.py         将 Windows上的 gui.new.json 转换为 maa-cli 任务 JSON
+
+tests/
+  test_*.py          离线回归检查，例如 .venv/bin/python tests/test_container.py
 ```
 
 

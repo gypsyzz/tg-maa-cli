@@ -8,9 +8,9 @@ from telegram.error import BadRequest
 from telegram.ext import Application
 
 from i18n import mode_text, text_for
-from maa_config import TIMEZONE, service_unit_for
+from maa_config import TIMEZONE, schedule_check_timer_unit_for, service_unit_for
 from profile_store import get_profile
-from schedule_health_checker import check_container
+from schedule_health_checker import CheckStatus, check_container
 from systemd_utils import next_run, unit_is_active
 
 PREFORMATTED_TEXT_LIMIT = 3400
@@ -71,6 +71,17 @@ def split_text(text: str, max_chars: int = PREFORMATTED_TEXT_LIMIT) -> list[str]
     return chunks
 
 
+def preformatted_messages(title: str, text: str, continued_word: str = "continued") -> list[str]:
+    """Split a long preformatted text into HTML messages; every message after the first carries the continued marker in its title."""
+    messages: list[str] = []
+
+    for index, chunk in enumerate(split_text(text)):
+        chunk_title = title if index == 0 else f"{title} ({continued_word})"
+        messages.append(f"{html.escape(chunk_title)}\n\n{html_pre(chunk)}")
+
+    return messages
+
+
 async def safe_edit_message(query, text: str, *, reply_markup: InlineKeyboardMarkup | None = None, parse_mode: str | None = None) -> None:
     try:
         await query.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
@@ -108,6 +119,19 @@ async def control_keyboard(name: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def container_status_text(lang: str, container_name: str, status: CheckStatus) -> str:
+    return text_for(lang, "check_container_status", container_name=container_name, status=text_for(lang, f"check_container_{status.value}"))
+
+
+def windows_status_text(lang: str, status: CheckStatus) -> str:
+    return text_for(lang, "check_windows_status", status=text_for(lang, f"check_windows_{status.value}"))
+
+
+async def check_timer_text(name: str, lang: str) -> str:
+    timer_active = await unit_is_active(schedule_check_timer_unit_for(name))
+    return f"{text_for(lang, 'check_timer_label')}: {text_for(lang, 'check_timer_active' if timer_active else 'check_timer_inactive')}"
+
+
 async def status_text(name: str) -> str:
     profile = get_profile(name)
     schedule = profile.schedule
@@ -119,8 +143,7 @@ async def status_text(name: str) -> str:
     body = f"🤖 MAA {name}\n\n{text_for(lang, 'run_schedule_label')}: {run_schedule_state}\n{text_for(lang, 'check_schedule_label')}: {check_schedule_state}"
 
     if profile.schedule_check.container_name:
-        status = await check_container(profile.schedule_check)
-        body += "\n" + text_for(lang, "check_container_status", container_name=profile.schedule_check.container_name, status=text_for(lang, f"check_container_{status.value}"))
+        body += "\n" + container_status_text(lang, profile.schedule_check.container_name, await check_container(profile.schedule_check))
 
     return body
 
@@ -147,12 +170,8 @@ async def schedule_text(name: str) -> str:
 
 
 async def send_preformatted(application: Application, *, chat_id: int, title: str, text: str, continued_word: str = "continued") -> None:
-    chunks = split_text(text)
-
-    for i, chunk in enumerate(chunks):
-        chunk_title = title if i == 0 else f"{title} ({continued_word})"
-
-        await application.bot.send_message(chat_id=chat_id, text=(f"{html.escape(chunk_title)}\n\n{html_pre(chunk)}"), parse_mode="HTML")
+    for body in preformatted_messages(title, text, continued_word):
+        await application.bot.send_message(chat_id=chat_id, text=body, parse_mode="HTML")
 
 
 async def send_profile_preformatted(application: Application, *, name: str, title: str, text: str) -> None:

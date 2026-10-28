@@ -107,23 +107,6 @@ def strip_ansi(text: str) -> str:
     return ANSI_RE.sub("", text)
 
 
-def normalize_log_mode(value) -> str:
-    # YAML may interpret unquoted ON/OFF
-    # as bool values.
-    if value is True:
-        return "ON"
-
-    if value is False:
-        return "OFF"
-
-    mode = str(value).strip().upper()
-
-    if mode not in {"OFF", "ON", "FULL"}:
-        return "OFF"
-
-    return mode
-
-
 # ---------------------------------------------------------------------------
 # asst.log handling
 # ---------------------------------------------------------------------------
@@ -468,7 +451,7 @@ async def report_finished_task(application: Application, name: str, pid: int, ta
 
     profile = get_profile(name)
 
-    mode = normalize_log_mode(profile.log)
+    mode = profile.log
 
     lang = profile.lang
 
@@ -550,7 +533,7 @@ async def report_finished_invocations(application: Application, asst_log_path: P
 
         try:
             profile = get_profile(name)
-            mode = normalize_log_mode(profile.log)
+            mode = profile.log
 
             if state.result in {"", "success"} or mode == "OFF" or invocation_id in task_error_invocations:
                 continue
@@ -702,7 +685,7 @@ async def refresh_profile_services(pid_to_profile: dict[int, str], pid_to_invoca
             pid = int(values.get("MainPID") or 0)
             exec_main_pid = int(values.get("ExecMainPID") or 0)
 
-        except (Exception, TypeError, ValueError):
+        except Exception:
             continue
 
         state = ProfileServiceState(invocation_id=values.get("InvocationID", ""), main_pid=pid, exec_main_pid=exec_main_pid, active_state=values.get("ActiveState", ""), result=values.get("Result", ""), exec_main_status=values.get("ExecMainStatus", ""))
@@ -728,7 +711,7 @@ def discard_inactive_session_results(pid_to_profile: dict[int, str], session_res
         name = pid_to_profile.get(pid)
 
         try:
-            mode = normalize_log_mode(get_profile(name).log) if name is not None else "OFF"
+            mode = get_profile(name).log if name is not None else "OFF"
         except Exception:
             mode = "OFF"
 
@@ -753,7 +736,7 @@ async def prune_stale_pids(application: Application, pid_to_profile: dict[int, s
         results = session_results.get(pid, [])
 
         try:
-            if name is not None and results and normalize_log_mode(get_profile(name).log) == "FULL":
+            if name is not None and results and get_profile(name).log == "FULL":
                 await send_full_session_results(application, name, results)
 
         except Exception:

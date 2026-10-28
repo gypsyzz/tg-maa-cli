@@ -16,12 +16,9 @@ TEXT = {
         "button_schedule_off": "⏸ Schedule OFF",
         "button_schedule_on": "▶️ Schedule ON",
 
-        "run_label": "Run",
-        "schedule_label": "Schedule",
         "run_schedule_label": "Run schedule",
         "check_schedule_label": "Check schedule",
         "next_run_label": "Next run",
-        "last_result_label": "Last result",
         "state_label": "State",
         "timezone_label": "Timezone",
         "commands_label": "Commands",
@@ -29,7 +26,6 @@ TEXT = {
 
         "state_on": "🟢 ON",
         "state_off": "🟠 OFF",
-        "schedule_saved": "🟠 OFF ({count} schedule{plural})",
 
         "no_saved_schedule": "No saved schedule.",
         "no_auto_run": "This name will not run automatically.",
@@ -57,6 +53,7 @@ TEXT = {
         "log_desc_off": "automatic log messages disabled",
         "log_desc_on": "send MAA task and process errors only",
         "log_desc_full": "send every MAA task result plus process errors",
+        "log_mode_invalid": "❌ Log mode must be OFF, ON, or FULL.",
 
         "alert_status": "🔔 {name} game reminder\nState: {state}\nTime: {duration}",
         "alert_enabled": "🔔 {name} game reminder enabled after {duration}.",
@@ -130,8 +127,6 @@ TEXT = {
         "program_error_result": "Systemd result: {result}",
         "program_error_status": "Process status: {status}",
 
-        "unauthorized": "Unauthorized",
-
         "result_success": "success",
         "result_exit-code": "exit-code",
         "result_signal": "signal",
@@ -165,12 +160,9 @@ TEXT = {
         "button_schedule_off": "⏸ 关闭定时",
         "button_schedule_on": "▶️ 开启定时",
 
-        "run_label": "运行",
-        "schedule_label": "定时",
         "run_schedule_label": "运行定时",
         "check_schedule_label": "检查定时",
         "next_run_label": "下次运行",
-        "last_result_label": "上次结果",
         "state_label": "状态",
         "timezone_label": "时区",
         "commands_label": "命令",
@@ -178,7 +170,6 @@ TEXT = {
 
         "state_on": "🟢 开启",
         "state_off": "🟠 关闭",
-        "schedule_saved": "🟠 关闭（已保存 {count} 个定时）",
 
         "no_saved_schedule": "没有已保存的定时计划。",
         "no_auto_run": "此配置不会自动运行。",
@@ -206,6 +197,7 @@ TEXT = {
         "log_desc_off": "自动日志消息已关闭",
         "log_desc_on": "仅发送 MAA 任务错误和进程级错误",
         "log_desc_full": "发送所有 MAA 任务结果和进程级错误",
+        "log_mode_invalid": "❌ 日志模式必须是 OFF、ON 或 FULL。",
 
         "alert_status": "🔔 {name} 游戏提醒\n状态: {state}\n时限: {duration}",
         "alert_enabled": "🔔 {name} 游戏提醒已开启，时限为 {duration}。",
@@ -278,8 +270,6 @@ TEXT = {
         "program_error_title": "❌ MAA {name} 进程运行失败",
         "program_error_result": "Systemd 结果：{result}",
         "program_error_status": "进程状态：{status}",
-
-        "unauthorized": "未授权",
 
         "result_success": "成功",
         "result_exit-code": "退出码错误",

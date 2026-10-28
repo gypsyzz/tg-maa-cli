@@ -1,14 +1,17 @@
-"""Offline regression checks: .venv/bin/python test_container_monitor.py"""
+"""Offline regression checks: .venv/bin/python tests/test_container_monitor.py"""
 
 from __future__ import annotations
 
 import asyncio
 import io
 import os
+import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import AsyncMock, patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 async def main() -> None:

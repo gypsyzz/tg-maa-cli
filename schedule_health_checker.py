@@ -177,7 +177,7 @@ def _log_command_error(label: str, result: CmdResult) -> None:
     print(f"{label} failed: {detail}", file=sys.stderr)
 
 
-def failure_message(name: str, profile: ProfileState, windows_status: CheckStatus, container_status: CheckStatus | None = None) -> str | None:
+def failure_message(profile: ProfileState, windows_status: CheckStatus, container_status: CheckStatus | None = None) -> str | None:
     failures = []
 
     if container_status is not None and container_status is not CheckStatus.OK:
@@ -192,7 +192,7 @@ def failure_message(name: str, profile: ProfileState, windows_status: CheckStatu
     return text_for(profile.lang, "check_result_failed", result="; ".join(failures))
 
 
-async def collect_failure_message(name: str, profile: ProfileState) -> str | None:
+async def collect_failure_message(profile: ProfileState) -> str | None:
     state = profile.schedule_check
 
     if state.container_name:
@@ -201,11 +201,11 @@ async def collect_failure_message(name: str, profile: ProfileState) -> str | Non
         container_status = None
         windows_status = await check_windows_maa(state)
 
-    return failure_message(name, profile, windows_status, container_status)
+    return failure_message(profile, windows_status, container_status)
 
 
-async def check_and_notify(bot: Bot, name: str, profile: ProfileState) -> bool:
-    message = await collect_failure_message(name, profile)
+async def check_and_notify(bot: Bot, profile: ProfileState) -> bool:
+    message = await collect_failure_message(profile)
 
     if message is None:
         return False
@@ -224,12 +224,12 @@ async def run(profile_name: str, *, notify: bool) -> int:
 
     if notify:
         async with Bot(TOKEN) as bot:
-            sent = await check_and_notify(bot, name, profile)
+            sent = await check_and_notify(bot, profile)
 
         print(f"Schedule check for {name}: {'alert sent' if sent else 'healthy'}.")
         return 0
 
-    message = await collect_failure_message(name, profile)
+    message = await collect_failure_message(profile)
 
     if message is None:
         print(f"Schedule check for {name}: healthy.")

@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import html
 from functools import wraps
 
 from telegram import BotCommandScopeChat, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
 
 from i18n import bot_commands, hours_text, language_name, mode_text, normalize_language, text_for
-from maa_config import schedule_check_timer_unit_for, service_unit_for
-from profile_store import get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, parse_alert_hours, resolve_profile_name, set_alert_enabled, set_alert_hours, set_language, set_log_mode, set_schedule, validate_schedule_check, validate_windows_app_control
+from maa_config import service_unit_for
+from profile_store import ScheduleState, get_log_mode, get_profile, get_profile_by_chat_id, normalize_times, parse_alert_hours, resolve_profile_name, set_alert_enabled, set_alert_hours, set_language, set_log_mode, set_schedule, validate_schedule_check, validate_windows_app_control
 from schedule_health_checker import CheckStatus, check_container, check_container_health, check_windows_maa, collect_failure_message, restart_container, start_windows_maa, stop_windows_maa, wait_for_windows_maa
 from systemd_utils import run_cmd, sync_timer, unit_is_active
 from task_store import add_fight_task, fight_sequence, load_task_json, long_task_sequence, parse_fight_add_args, remove_fight_task, save_task_json, short_task_sequence
-from telegram_ui import control_keyboard, html_code, html_code_lines, html_pre, safe_edit_message, schedule_text, split_text, status_text
+from telegram_ui import check_timer_text, container_status_text, control_keyboard, html_code_lines, preformatted_messages, safe_edit_message, schedule_text, status_text, windows_status_text
 
 
 def name_for_update(update: Update) -> str | None:
@@ -54,23 +53,62 @@ def current_lang(name: str) -> str:
     return get_profile(name).lang
 
 
+async def reply_error(update: Update, exc: Exception) -> None:
+    await update.effective_message.reply_text(f"❌ {exc}")
+
+
+async def reply_usage(update: Update, lang: str, lines: list[str]) -> None:
+    await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n{html_code_lines(lines)}", parse_mode="HTML")
+
+
+async def reply_commands(update: Update, lang: str, intro: str, lines: list[str]) -> None:
+    await update.effective_message.reply_text(f"{intro}\n\n{text_for(lang, 'commands_label')}:\n{html_code_lines(lines)}", parse_mode="HTML")
+
+
 async def reply_preformatted(update: Update, name: str, title: str, text: str) -> None:
     message = update.effective_message
 
     if message is None:
         return
 
-    lang = current_lang(name)
-    chunks = split_text(text)
-
-    for i, chunk in enumerate(chunks):
-        chunk_title = title if i == 0 else (f"{title} ({text_for(lang, 'continued')})")
-
-        await message.reply_text(f"{html.escape(chunk_title)}\n\n{html_pre(chunk)}", parse_mode="HTML")
+    for body in preformatted_messages(title, text, text_for(current_lang(name), "continued")):
+        await message.reply_text(body, parse_mode="HTML")
 
 
-async def reply_error(update: Update, exc: Exception) -> None:
-    await update.effective_message.reply_text(f"❌ {exc}")
+async def refresh_panel(query, name: str) -> None:
+    await safe_edit_message(query, await status_text(name), reply_markup=await control_keyboard(name))
+
+
+async def apply_schedule(update: Update, name: str, **changes) -> ScheduleState | None:
+    """Save a schedule change and sync its timers. On failure the error is sent as the reply and None is returned."""
+    try:
+        schedule = set_schedule(name, **changes)
+        await sync_timer(name, schedule)
+    except (ValueError, RuntimeError) as exc:
+        await reply_error(update, exc)
+        return None
+
+    return schedule
+
+
+def schedule_times_text(lang: str, key: str, name: str, schedule: ScheduleState) -> str:
+    state = text_for(lang, "state_on" if schedule.run_enabled else "state_off")
+    return text_for(lang, key, name=name, state=state) + "\n" + "\n".join(f"• {value}" for value in schedule.times)
+
+
+async def set_service_running(name: str, lang: str, running: bool) -> str | None:
+    """Start or stop the profile's MAA service. Returns the localized error text when systemctl fails, otherwise None."""
+    unit = service_unit_for(name)
+
+    if await unit_is_active(unit) == running:
+        return None
+
+    result = await run_cmd("systemctl", "--user", "start" if running else "stop", unit)
+
+    if result.returncode == 0:
+        return None
+
+    return text_for(lang, "start_failed" if running else "stop_failed", error=(result.stderr or result.stdout))
 
 
 async def chat_id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -104,133 +142,94 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if action == "set":
         if not values:
-            await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code("/schedule set 00:33 17:33"), parse_mode="HTML")
+            await reply_usage(update, lang, ["/schedule set 00:33 17:33"])
             return
 
-        try:
-            schedule = set_schedule(name, times=values, run_enabled=True)
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
-            await reply_error(update, exc)
-            return
+        schedule = await apply_schedule(update, name, times=values, run_enabled=True)
 
-        await update.effective_message.reply_text(text_for(lang, "schedule_set_enabled", name=name) + "\n" + "\n".join(f"• {value}" for value in schedule.times))
+        if schedule is not None:
+            await update.effective_message.reply_text(schedule_times_text(lang, "schedule_set_enabled", name, schedule))
         return
 
     if action == "add":
         if not values:
-            await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code("/schedule add 12:00"), parse_mode="HTML")
+            await reply_usage(update, lang, ["/schedule add 12:00"])
             return
 
         try:
             current = get_profile(name).schedule
             times = normalize_times([*current.times, *values])
-
-            run_enabled = current.run_enabled if current.times else True
-            check_enabled = current.check_enabled if current.times else False
-
-            schedule = set_schedule(name, times=times, run_enabled=run_enabled, check_enabled=check_enabled)
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
+        except ValueError as exc:
             await reply_error(update, exc)
             return
 
-        state = text_for(lang, "state_on") if schedule.run_enabled else text_for(lang, "state_off")
+        # The first saved time turns the run schedule on; later additions keep the current switches.
+        run_enabled = current.run_enabled if current.times else True
+        check_enabled = current.check_enabled if current.times else False
+        schedule = await apply_schedule(update, name, times=times, run_enabled=run_enabled, check_enabled=check_enabled)
 
-        await update.effective_message.reply_text(text_for(lang, "schedule_updated", name=name, state=state) + "\n" + "\n".join(f"• {value}" for value in schedule.times))
+        if schedule is not None:
+            await update.effective_message.reply_text(schedule_times_text(lang, "schedule_updated", name, schedule))
         return
 
     if action == "remove":
         if not values:
-            await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code("/schedule remove 12:00"), parse_mode="HTML")
+            await reply_usage(update, lang, ["/schedule remove 12:00"])
             return
 
         try:
             current = get_profile(name).schedule
-            remove = set(normalize_times(values))
-            times = [value for value in current.times if value not in remove]
-
-            schedule = set_schedule(name, times=times, run_enabled=(current.run_enabled if times else False), check_enabled=(current.check_enabled if times else False))
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
+            removed = set(normalize_times(values))
+        except ValueError as exc:
             await reply_error(update, exc)
+            return
+
+        times = [value for value in current.times if value not in removed]
+        schedule = await apply_schedule(update, name, times=times, run_enabled=current.run_enabled if times else False, check_enabled=current.check_enabled if times else False)
+
+        if schedule is None:
             return
 
         if schedule.times:
-            state = text_for(lang, "state_on") if schedule.run_enabled else text_for(lang, "state_off")
-            message = text_for(lang, "schedule_updated", name=name, state=state) + "\n" + "\n".join(f"• {value}" for value in schedule.times)
+            await update.effective_message.reply_text(schedule_times_text(lang, "schedule_updated", name, schedule))
         else:
-            message = text_for(lang, "schedule_empty", name=name)
-
-        await update.effective_message.reply_text(message)
+            await update.effective_message.reply_text(text_for(lang, "schedule_empty", name=name))
         return
 
-    if action == "off":
+    if action in {"on", "off"}:
         if values:
-            await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code("/schedule off"), parse_mode="HTML")
+            await reply_usage(update, lang, [f"/schedule {action}"])
             return
 
-        current = get_profile(name).schedule
+        enable = action == "on"
 
-        if not current.times:
-            await update.effective_message.reply_text(text_for(lang, "schedule_no_saved", name=name))
+        if not get_profile(name).schedule.times:
+            await update.effective_message.reply_text(text_for(lang, "schedule_no_saved_set_first" if enable else "schedule_no_saved", name=name))
             return
 
-        try:
-            schedule = set_schedule(name, run_enabled=False)
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
-            await reply_error(update, exc)
-            return
-
-        await update.effective_message.reply_text(text_for(lang, "schedule_disabled", name=name))
+        if await apply_schedule(update, name, run_enabled=enable) is not None:
+            await update.effective_message.reply_text(text_for(lang, "schedule_enabled" if enable else "schedule_disabled", name=name))
         return
 
-    if action == "on":
-        if values:
-            await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code("/schedule on"), parse_mode="HTML")
-            return
-
-        current = get_profile(name).schedule
-
-        if not current.times:
-            await update.effective_message.reply_text(text_for(lang, "schedule_no_saved_set_first", name=name))
-            return
-
-        try:
-            schedule = set_schedule(name, run_enabled=True)
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
-            await reply_error(update, exc)
-            return
-
-        await update.effective_message.reply_text(text_for(lang, "schedule_enabled", name=name))
-        return
-
-    await update.effective_message.reply_text(text_for(lang, "unknown_schedule") + "\n\n" + f"{text_for(lang, 'commands_label')}:\n" + html_code_lines(["/schedule", "/schedule set 00:33 17:33", "/schedule add 12:00", "/schedule remove 12:00", "/schedule on", "/schedule off"]), parse_mode="HTML")
+    await reply_commands(update, lang, text_for(lang, "unknown_schedule"), ["/schedule", "/schedule set 00:33 17:33", "/schedule add 12:00", "/schedule remove 12:00", "/schedule on", "/schedule off"])
 
 
 @auth_required
 async def winmaa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     name = current_name(context)
     profile = get_profile(name)
-    schedule = profile.schedule
     lang = profile.lang
 
     if not context.args:
-        timer_active = await unit_is_active(schedule_check_timer_unit_for(name))
-        timer_state = text_for(lang, "check_timer_active" if timer_active else "check_timer_inactive")
-        lines = [text_for(lang, "check_title", name=name), f"{text_for(lang, 'check_timer_label')}: {timer_state}"]
+        lines = [text_for(lang, "check_title", name=name), await check_timer_text(name, lang)]
 
         try:
             state = validate_schedule_check(name, profile.schedule_check)
 
             if state.container_name:
-                container_status = await check_container(state)
-                lines.append(text_for(lang, "check_container_status", container_name=state.container_name, status=text_for(lang, f"check_container_{container_status.value}")))
+                lines.append(container_status_text(lang, state.container_name, await check_container(state)))
 
-            windows_status = await check_windows_maa(state)
-            lines.append(text_for(lang, "check_windows_status", status=text_for(lang, f"check_windows_{windows_status.value}")))
+            lines.append(windows_status_text(lang, await check_windows_maa(state)))
         except ValueError:
             lines.append(text_for(lang, "check_not_configured"))
 
@@ -238,11 +237,12 @@ async def winmaa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     action = context.args[0].casefold()
+    option = context.args[1].casefold() if len(context.args) == 2 else None
 
     if action == "check" and len(context.args) == 1:
         try:
             validate_schedule_check(name, profile.schedule_check)
-            failure = await collect_failure_message(name, profile)
+            failure = await collect_failure_message(profile)
         except ValueError:
             await update.effective_message.reply_text(text_for(lang, "check_not_configured"))
             return
@@ -251,35 +251,18 @@ async def winmaa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     if action == "monitor" and len(context.args) == 1:
-        timer_active = await unit_is_active(schedule_check_timer_unit_for(name))
-        timer_state = text_for(lang, "check_timer_active" if timer_active else "check_timer_inactive")
-        await update.effective_message.reply_text(f"{text_for(lang, 'check_timer_label')}: {timer_state}")
+        await update.effective_message.reply_text(await check_timer_text(name, lang))
         return
 
-    if action == "monitor" and len(context.args) == 2 and context.args[1].casefold() == "on":
-        if not schedule.times:
+    if action == "monitor" and option in {"on", "off"}:
+        enable = option == "on"
+
+        if enable and not profile.schedule.times:
             await update.effective_message.reply_text(text_for(lang, "check_no_schedule"))
             return
 
-        try:
-            schedule = set_schedule(name, check_enabled=True)
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
-            await reply_error(update, exc)
-            return
-
-        await update.effective_message.reply_text(text_for(lang, "check_enabled", name=name))
-        return
-
-    if action == "monitor" and len(context.args) == 2 and context.args[1].casefold() == "off":
-        try:
-            schedule = set_schedule(name, check_enabled=False)
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
-            await reply_error(update, exc)
-            return
-
-        await update.effective_message.reply_text(text_for(lang, "check_disabled", name=name))
+        if await apply_schedule(update, name, check_enabled=enable) is not None:
+            await update.effective_message.reply_text(text_for(lang, "check_enabled" if enable else "check_disabled", name=name))
         return
 
     if action == "app" and len(context.args) == 1:
@@ -289,48 +272,37 @@ async def winmaa_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.effective_message.reply_text(text_for(lang, "check_not_configured"))
             return
 
-        windows_status = await check_windows_maa(state)
-        await update.effective_message.reply_text(text_for(lang, "check_windows_status", status=text_for(lang, f"check_windows_{windows_status.value}")))
+        await update.effective_message.reply_text(windows_status_text(lang, await check_windows_maa(state)))
         return
 
-    if action == "app" and len(context.args) == 2 and context.args[1].casefold() in {"on", "off"}:
-        app_action = context.args[1].casefold()
-
+    if action == "app" and option in {"on", "off"}:
         try:
             state = validate_windows_app_control(name, profile.schedule_check)
         except ValueError:
             await update.effective_message.reply_text(text_for(lang, "check_app_not_configured"))
             return
 
-        current_status = await wait_for_windows_maa(state, CheckStatus.OK if app_action == "on" else CheckStatus.DOWN, attempts=1, delay=0)
+        expected = CheckStatus.OK if option == "on" else CheckStatus.DOWN
 
-        if app_action == "on" and current_status is CheckStatus.OK:
-            await update.effective_message.reply_text(text_for(lang, "check_app_already_on"))
+        if await wait_for_windows_maa(state, expected, attempts=1, delay=0) is expected:
+            await update.effective_message.reply_text(text_for(lang, "check_app_already_on" if option == "on" else "check_app_already_off"))
             return
 
-        if app_action == "off" and current_status is CheckStatus.DOWN:
-            await update.effective_message.reply_text(text_for(lang, "check_app_already_off"))
-            return
-
-        result = await start_windows_maa(state) if app_action == "on" else await stop_windows_maa(state)
+        result = await start_windows_maa(state) if option == "on" else await stop_windows_maa(state)
+        action_text = text_for(lang, f"check_app_action_{option}")
 
         if result.returncode != 0:
-            await update.effective_message.reply_text(text_for(lang, "check_app_action_failed", action=text_for(lang, f"check_app_action_{app_action}")))
+            await update.effective_message.reply_text(text_for(lang, "check_app_action_failed", action=action_text))
             return
 
-        expected = CheckStatus.OK if app_action == "on" else CheckStatus.DOWN
-        final_status = await wait_for_windows_maa(state, expected, attempts=8, delay=1)
-
-        if final_status is not expected:
-            await update.effective_message.reply_text(text_for(lang, "check_app_action_timeout", action=text_for(lang, f"check_app_action_{app_action}")))
+        if await wait_for_windows_maa(state, expected, attempts=8, delay=1) is not expected:
+            await update.effective_message.reply_text(text_for(lang, "check_app_action_timeout", action=action_text))
             return
 
-        await update.effective_message.reply_text(text_for(lang, "check_app_turned_on" if app_action == "on" else "check_app_turned_off"))
+        await update.effective_message.reply_text(text_for(lang, "check_app_turned_on" if option == "on" else "check_app_turned_off"))
         return
 
-    await update.effective_message.reply_text(
-        text_for(lang, "unknown_check") + "\n\n" + f"{text_for(lang, 'commands_label')}:\n" + html_code_lines(["/winmaa", "/winmaa check", "/winmaa monitor", "/winmaa monitor on", "/winmaa monitor off", "/winmaa app", "/winmaa app on", "/winmaa app off"]), parse_mode="HTML"
-    )
+    await reply_commands(update, lang, text_for(lang, "unknown_check"), ["/winmaa", "/winmaa check", "/winmaa monitor", "/winmaa monitor on", "/winmaa monitor off", "/winmaa app", "/winmaa app on", "/winmaa app off"])
 
 
 @auth_required
@@ -339,7 +311,7 @@ async def container_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     lang = profile.lang
 
     if len(context.args) != 1 or context.args[0].casefold() not in {"restart", "health"}:
-        await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code_lines(["/container health", "/container restart"]), parse_mode="HTML")
+        await reply_usage(update, lang, ["/container health", "/container restart"])
         return
 
     action = context.args[0].casefold()
@@ -383,7 +355,7 @@ async def task_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await reply_preformatted(update, name, text_for(lang, "task_long_title", name=name), long_task_sequence(data))
         return
 
-    await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code_lines(["/task", "/task long"]), parse_mode="HTML")
+    await reply_usage(update, lang, ["/task", "/task long"])
 
 
 @auth_required
@@ -418,7 +390,7 @@ async def fight_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if action == "remove":
         if len(values) != 1:
-            await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code("/fight remove 5"), parse_mode="HTML")
+            await reply_usage(update, lang, ["/fight remove 5"])
             return
 
         try:
@@ -437,7 +409,7 @@ async def fight_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await reply_preformatted(update, name, text_for(lang, "fight_removed", stage=stage, task_index=task_index), short_task_sequence(data))
         return
 
-    await update.effective_message.reply_text(text_for(lang, "unknown_fight") + "\n\n" + f"{text_for(lang, 'commands_label')}:\n" + html_code_lines(["/fight", "/fight add 1-7", "/fight add 1-7 5", "/fight remove 5"]), parse_mode="HTML")
+    await reply_commands(update, lang, text_for(lang, "unknown_fight"), ["/fight", "/fight add 1-7", "/fight add 1-7 5", "/fight remove 5"])
 
 
 @auth_required
@@ -446,26 +418,20 @@ async def log_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     lang = current_lang(name)
 
     if not context.args:
-        mode = get_log_mode(name)
-
-        await update.effective_message.reply_text(text_for(lang, "log_mode_title", name=name, mode=mode_text(lang, mode)) + "\n\n" + f"{text_for(lang, 'commands_label')}:\n" + html_code_lines(["/log ON", "/log OFF", "/log FULL"]), parse_mode="HTML")
+        await reply_commands(update, lang, text_for(lang, "log_mode_title", name=name, mode=mode_text(lang, get_log_mode(name))), ["/log ON", "/log OFF", "/log FULL"])
         return
 
     if len(context.args) != 1:
-        await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code_lines(["/log", "/log ON", "/log OFF", "/log FULL"]), parse_mode="HTML")
+        await reply_usage(update, lang, ["/log", "/log ON", "/log OFF", "/log FULL"])
         return
 
-    requested = context.args[0].upper()
-
-    if requested not in {"OFF", "ON", "FULL"}:
-        await update.effective_message.reply_text("❌ " + ("日志模式必须是 OFF、ON 或 FULL。" if lang == "zh" else "Log mode must be OFF, ON, or FULL."))
+    try:
+        mode = set_log_mode(name, context.args[0])
+    except ValueError:
+        await update.effective_message.reply_text(text_for(lang, "log_mode_invalid"))
         return
 
-    mode = set_log_mode(name, requested)
-
-    description_key = {"OFF": "log_desc_off", "ON": "log_desc_on", "FULL": "log_desc_full"}[mode]
-
-    await update.effective_message.reply_text(text_for(lang, "log_mode_title", name=name, mode=mode_text(lang, mode)) + "\n" + text_for(lang, description_key))
+    await update.effective_message.reply_text(text_for(lang, "log_mode_title", name=name, mode=mode_text(lang, mode)) + "\n" + text_for(lang, f"log_desc_{mode.lower()}"))
 
 
 @auth_required
@@ -476,7 +442,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     if not context.args:
         state = text_for(lang, "state_on" if profile.alert.enabled else "state_off")
-        await update.effective_message.reply_text(text_for(lang, "alert_status", name=name, state=state, duration=hours_text(lang, profile.alert.hours)) + "\n\n" + f"{text_for(lang, 'commands_label')}:\n" + html_code_lines(["/alert on", "/alert off", "/alert time 24"]), parse_mode="HTML")
+        await reply_commands(update, lang, text_for(lang, "alert_status", name=name, state=state, duration=hours_text(lang, profile.alert.hours)), ["/alert on", "/alert off", "/alert time 24"])
         return
 
     action = context.args[0].lower()
@@ -497,7 +463,7 @@ async def alert_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.effective_message.reply_text(text_for(lang, "alert_time_set", name=name, duration=hours_text(lang, alert.hours)))
         return
 
-    await update.effective_message.reply_text(f"{text_for(lang, 'usage_label')}:\n" + html_code_lines(["/alert", "/alert on", "/alert off", "/alert time 24"]), parse_mode="HTML")
+    await reply_usage(update, lang, ["/alert", "/alert on", "/alert off", "/alert time 24"])
 
 
 @auth_required
@@ -506,7 +472,7 @@ async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     old_lang = current_lang(name)
 
     if not context.args:
-        await update.effective_message.reply_text(text_for(old_lang, "lang_current", name=name, language=language_name(old_lang)) + "\n\n" + f"{text_for(old_lang, 'commands_label')}:\n" + html_code_lines(["/lang en", "/lang zh"]), parse_mode="HTML")
+        await reply_commands(update, old_lang, text_for(old_lang, "lang_current", name=name, language=language_name(old_lang)), ["/lang en", "/lang zh"])
         return
 
     if len(context.args) != 1:
@@ -529,38 +495,27 @@ async def lang_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.effective_message.reply_text(await status_text(name), reply_markup=await control_keyboard(name))
 
 
-@auth_required
-async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def toggle_service_command(update: Update, context: ContextTypes.DEFAULT_TYPE, *, running: bool) -> None:
     name = current_name(context)
-    lang = current_lang(name)
-    unit = service_unit_for(name)
+    error = await set_service_running(name, current_lang(name), running)
 
-    if not await unit_is_active(unit):
-        result = await run_cmd("systemctl", "--user", "start", unit)
+    if error is not None:
+        await update.effective_message.reply_text(error)
+        return
 
-        if result.returncode != 0:
-            await update.effective_message.reply_text(text_for(lang, "start_failed", error=(result.stderr or result.stdout)))
-            return
-
+    # A delegated /sudo run or stop replies with plain status text instead of the target's control panel.
     reply_markup = None if context.user_data.get("maa_sudo_target") else await control_keyboard(name)
     await update.effective_message.reply_text(await status_text(name), reply_markup=reply_markup)
+
+
+@auth_required
+async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    await toggle_service_command(update, context, running=True)
 
 
 @auth_required
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    name = current_name(context)
-    lang = current_lang(name)
-    unit = service_unit_for(name)
-
-    if await unit_is_active(unit):
-        result = await run_cmd("systemctl", "--user", "stop", unit)
-
-        if result.returncode != 0:
-            await update.effective_message.reply_text(text_for(lang, "stop_failed", error=(result.stderr or result.stdout)))
-            return
-
-    reply_markup = None if context.user_data.get("maa_sudo_target") else await control_keyboard(name)
-    await update.effective_message.reply_text(await status_text(name), reply_markup=reply_markup)
+    await toggle_service_command(update, context, running=False)
 
 
 @auth_required
@@ -575,7 +530,7 @@ async def sudo_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
 
     if len(context.args) < 2:
-        await update.effective_message.reply_text(f"{text_for(caller_lang, 'usage_label')}:\n" + html_code("/sudo PROFILE COMMAND [ARGS ...]"), parse_mode="HTML")
+        await reply_usage(update, caller_lang, ["/sudo PROFILE COMMAND [ARGS ...]"])
         return
 
     try:
@@ -684,7 +639,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     action = query.data.removeprefix("maa:")
 
     if action == "status":
-        await safe_edit_message(query, await status_text(name), reply_markup=await control_keyboard(name))
+        await refresh_panel(query, name)
         return
 
     if action == "schedule":
@@ -692,12 +647,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     if action == "log_toggle":
-        current = get_log_mode(name)
-        new_mode = "ON" if current == "OFF" else "OFF"
-
-        set_log_mode(name, new_mode)
-
-        await safe_edit_message(query, await status_text(name), reply_markup=await control_keyboard(name))
+        set_log_mode(name, "ON" if get_log_mode(name) == "OFF" else "OFF")
+        await refresh_panel(query, name)
         return
 
     if action == "task":
@@ -710,61 +661,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await reply_preformatted(update, name, text_for(lang, "task_title", name=name), short_task_sequence(data))
         return
 
-    if action == "run":
-        unit = service_unit_for(name)
+    if action in {"run", "stop"}:
+        error = await set_service_running(name, lang, action == "run")
 
-        if not await unit_is_active(unit):
-            result = await run_cmd("systemctl", "--user", "start", unit)
+        if error is not None:
+            await query.message.reply_text(error)
+            return
 
-            if result.returncode != 0:
-                await query.message.reply_text(text_for(lang, "start_failed", error=(result.stderr or result.stdout)))
-                return
-
-        await safe_edit_message(query, await status_text(name), reply_markup=await control_keyboard(name))
+        await refresh_panel(query, name)
         return
 
-    if action == "stop":
-        unit = service_unit_for(name)
+    if action in {"schedule_on", "schedule_off"}:
+        enable = action == "schedule_on"
+        has_times = bool(get_profile(name).schedule.times)
 
-        if await unit_is_active(unit):
-            result = await run_cmd("systemctl", "--user", "stop", unit)
-
-            if result.returncode != 0:
-                await query.message.reply_text(text_for(lang, "stop_failed", error=(result.stderr or result.stdout)))
-                return
-
-        await safe_edit_message(query, await status_text(name), reply_markup=await control_keyboard(name))
-        return
-
-    if action == "schedule_off":
-        current = get_profile(name).schedule
-
-        if current.times:
-            try:
-                schedule = set_schedule(name, run_enabled=False)
-                await sync_timer(name, schedule)
-            except (ValueError, RuntimeError) as exc:
-                await reply_error(update, exc)
-                return
-
-        await safe_edit_message(query, await status_text(name), reply_markup=await control_keyboard(name))
-        return
-
-    if action == "schedule_on":
-        current = get_profile(name).schedule
-
-        if not current.times:
+        if enable and not has_times:
             await query.message.reply_text(text_for(lang, "schedule_no_saved", name=name))
             return
 
-        try:
-            schedule = set_schedule(name, run_enabled=True)
-            await sync_timer(name, schedule)
-        except (ValueError, RuntimeError) as exc:
-            await reply_error(update, exc)
+        # Turning the schedule off without saved times is a no-op; the panel is still refreshed.
+        if has_times and await apply_schedule(update, name, run_enabled=enable) is None:
             return
 
-        await safe_edit_message(query, await status_text(name), reply_markup=await control_keyboard(name))
+        await refresh_panel(query, name)
 
 
 def register_handlers(application: Application) -> None:

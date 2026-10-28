@@ -1,16 +1,19 @@
-"""Offline regression checks: .venv/bin/python test_container.py"""
+"""Offline regression checks: .venv/bin/python tests/test_container.py"""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
 
 from telegram.ext import CommandHandler
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 async def main() -> None:
@@ -144,11 +147,11 @@ async def main() -> None:
         with patch.object(checker, "check_container_health", new=AsyncMock(return_value=failure)) as health, patch.object(checker, "check_windows_maa", new=AsyncMock(return_value=checker.CheckStatus.OK)), patch.object(checker, "_log_command_error"):
             summary = await telegram_ui.status_text("ALPHA")
             assert "redroid-alpha" in summary and "NOT READY" in summary
-            summary = await checker.collect_failure_message("ALPHA", get_profile("ALPHA"))
+            summary = await checker.collect_failure_message(get_profile("ALPHA"))
             assert "redroid-alpha" in summary and "not ready" in summary
             health.return_value = ok
             assert "HEALTHY" in await telegram_ui.status_text("ALPHA")
-            assert await checker.collect_failure_message("ALPHA", get_profile("ALPHA")) is None
+            assert await checker.collect_failure_message(get_profile("ALPHA")) is None
             health.return_value = CmdResult(124, "", "Timed out")
             assert "CHECK ERROR" in await telegram_ui.status_text("ALPHA")
             health.reset_mock()
